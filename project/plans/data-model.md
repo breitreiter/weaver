@@ -188,49 +188,50 @@ a server-computed verdict.
 | `decorations` | object[] | `{ target, role: suspect\|blast_radius\|healthy, note }` |
 | `narrative` | markdown | what the investigator concluded |
 
-## Analysis surface — facts in the backend, correlation in the toolkit, verdicts nowhere
+## Analysis surface — primitives enumerate, the reasoner discriminates
 
-Two hard lines, decided deliberately:
+Canonical spec: `analysis-architecture.md`. The lines that bind this schema:
 
-1. **The backend serves facts, not analysis.** Its API is a read surface over
-   observed telemetry. It computes no anomalies, no rankings, no partitions —
-   it answers *"what was observed for X over window W,"* nothing more.
-2. **No layer returns a verdict.** Not the backend, not the toolkit. There is no
-   `analyze-incident` route that names a cause, and no `interesting-subgraphs`
-   route that pre-cleaves the graph. Those hand over the conclusion — they are
-   the oracle this project argues against, and they evaporate the live
-   investigation that *is* the demo. **Banned.**
+1. **Stored data is pure observation.** The DB holds raw telemetry only — no
+   anomalies, rankings, partitions, or labels baked in.
+2. **Primitives are computed live** over that store and exposed by the API. They
+   **enumerate**, never **discriminate** cause from collateral — and they live in
+   `Weaver.Core` / `Weaver.Api`, so the CLI *and* the web UI consume the same
+   implementation (UI parity: "check the blast radius" is one shared capability).
+3. **No layer returns a verdict, and none composes the investigation.** No
+   `analyze-incident`, no `interesting-subgraphs`, no `/solve`, no symptom→cause
+   route — anywhere. Those are the oracle this project argues against. **Banned.**
 
-### Backend endpoints — facts only
+### Observation endpoints — raw facts
 
-- `metrics` — query time series (subject, metric, window). Raw facts.
-- `logs` — query logs (service, level, window, FTS5 text match). Raw facts.
-- `traces` — query traces by route/status/duration; drill into spans to
-  see *which hop* is slow or erroring. Raw facts.
-- `topology` / `neighbors` / `paths` — the graph as observed. Raw facts.
+- `metrics` — query time series (subject, metric, window).
+- `logs` — query logs (service, level, window, FTS5 text match).
+- `traces` — query traces by route/status/duration; drill into spans to see
+  *which hop* is slow or erroring.
+- `topology` / `neighbors` / `paths` — the graph as observed.
 
-### Correlation — in the consumer/CLI/agent layer, composed over those facts
+### Primitive endpoints — undiscriminating enumerations (in `Core`/`Api`)
 
-*Mechanical correlation, not conclusions.* These narrow the search; the causal
-judgment stays with the reasoner. They live in the toolkit the agent drives
-(built from backend facts), **not** as backend endpoints — so the server stays a
-pure observation surface:
+*Mechanical correlation, not conclusions.* They narrow the search; the causal
+judgment stays with the reasoner:
 
-- `anomalies` — given window vs. baseline, metrics that deviated
-  (z-score / change-point). Says "these moved," not "this is the cause."
-- `timeline` — order anomaly *onset times* across services. Reveals
-  precedence; reading precedence as causation is the investigator's call.
-- `blast-radius` — given a candidate node, the downstream reachable set
-  (pure graph computation). *Tests* a hypothesis; it does not generate one.
+- `anomalies` — given window vs. baseline, metrics that deviated (z-score /
+  change-point). Lists *everything* that moved — not "this is the cause."
+- `timeline` — orders anomaly *onset times* across services. Reveals precedence;
+  reading precedence as causation is the investigator's call.
+- `blast-radius` — given a candidate node, the downstream reachable set. *Tests*
+  a reasoner-supplied hypothesis; it does not generate one.
+- selectors — enumerate a subgraph from predicates the reasoner chose (see
+  Storage & the selector power-tool).
 
-**Why this split.** At several-hundred services the agent cannot eyeball raw
-metrics for everything, so it needs cheap mechanical correlation to navigate
-(see `agent-workflow.md`, claims 1–2) — hence these tools must exist. But
-correlation that lived *in the backend, returned as a ranking,* would be the
-black box. So: facts are served, correlation is composed by the toolkit, and the
-cause is reasoned — never returned. The mystery's difficulty therefore lives in
-the **data's texture** (downstream symptoms, cause-vs-collateral, decoy
-anomalies), not in any tool.
+**Why.** At several-hundred services the agent can't eyeball raw metrics for
+everything, so it needs cheap mechanical correlation to navigate (see
+`agent-workflow.md`, claims 1–2) — hence these primitives must exist, and must be
+shared by both surfaces. The no-oracle protection is the **enumerate/discriminate
+boundary + the ban on verdict/composition routes**, not keeping correlation out
+of the backend. So: facts and enumerations are served, the cause is *reasoned* —
+never returned. The mystery's difficulty lives in the **data's texture**
+(downstream symptoms, cause-vs-collateral, decoy anomalies), not in any tool.
 
 ## Generation defaults (for the Sonnet + Python script)
 
