@@ -116,6 +116,28 @@ app.MapGet("/api/traces/{id}", (WeaverDbContext db, string id) =>
     return Results.Ok(new TraceDetailDto(ToTraceDto(t), spans));
 });
 
+// --- analysis primitives (enumerate; never discriminate a cause) ---------
+app.MapGet("/api/blast-radius/{node}", (WeaverDbContext db, string node) =>
+{
+    if (db.Services.FirstOrDefault(s => s.Id == node) is null)
+        return Results.NotFound(new { error = $"unknown service '{node}'" });
+    var edges = db.Dependencies.Select(d => new { d.FromService, d.ToService }).ToList()
+        .Select(e => (e.FromService, e.ToService)).ToList();
+    return Results.Ok(Analysis.BlastRadius(edges, node));
+});
+
+app.MapGet("/api/anomalies", (WeaverDbContext db, string? split, double? z, double? minPct) =>
+{
+    var (series, at) = LoadSeries(db, split);
+    return Analysis.Anomalies(series, at, z ?? 3.0, minPct ?? 15.0);
+});
+
+app.MapGet("/api/timeline", (WeaverDbContext db, string? split, double? z, double? minPct) =>
+{
+    var (series, at) = LoadSeries(db, split);
+    return Analysis.Timeline(series, at, z ?? 3.0, minPct ?? 15.0);
+});
+
 app.Run();
 
 // --- projections (entity -> wire DTO) ------------------------------------
@@ -131,3 +153,25 @@ static SpanDto ToSpanDto(SpanEntity s) =>
     new(s.Id, s.ParentSpanId, s.ServiceId, s.EdgeId, s.Kind, s.StartOffsetMs, s.DurationMs, s.SelfMs, s.Status, ParseJson(s.Attributes));
 static JsonElement ParseJson(string s) =>
     JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(s) ? "{}" : s);
+
+// Load every metric series, plus the comparison split (default: 30% into the
+// observed window). The whole dataset is small enough to group in memory.
+static (List<Analysis.SeriesInput> series, DateTimeOffset split) LoadSeries(WeaverDbContext db, string? split)
+{
+    var rows = db.MetricSamples.OrderBy(m => m.Ts).ToList();
+    var series = rows
+        .GroupBy(m => (m.SubjectKind, m.SubjectId, m.Metric))
+        .Select(g => new Analysis.SeriesInput(g.Key.SubjectKind, g.Key.SubjectId, g.Key.Metric,
+            g.Select(x => (DateTimeOffset.Parse(x.Ts), x.Value)).ToList()))
+        .ToList();
+
+    DateTimeOffset at;
+    if (split is not null) at = DateTimeOffset.Parse(split);
+    else
+    {
+        var min = DateTimeOffset.Parse(rows[0].Ts);
+        var max = DateTimeOffset.Parse(rows[^1].Ts);
+        at = min + (max - min) * 0.3;
+    }
+    return (series, at);
+}

@@ -61,3 +61,26 @@ public record TraceDto(
     string Status);
 
 public record TraceDetailDto(TraceDto Trace, IReadOnlyList<SpanDto> Spans);
+
+// --- analysis primitives (enumerations, never verdicts) ------------------
+
+public record BlastNodeDto(string ServiceId, int Hops);
+
+public record BlastRadiusDto(string Node, int Count, IReadOnlyList<BlastNodeDto> Dependents);
+
+// One signal that moved between the base window and the subject window.
+// Lists what moved — cause AND collateral, undifferentiated.
+public record AnomalyDto(
+    string SubjectKind,
+    string SubjectId,
+    string Metric,
+    double BaseMean,
+    double SubjectMean,
+    double DeltaPct,
+    double Z,
+    string Direction,   // "up" | "down"
+    string? OnsetTs);
+
+// Earliest onset per subject — orders precedence, crowns nothing.
+public record TimelineEntryDto(string SubjectId, string SubjectKind, string Metric, string OnsetTs, double Z);
+

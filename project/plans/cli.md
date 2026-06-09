@@ -50,14 +50,14 @@ Algorithm, per series over the window:
 between, time anchored relative to incident onset:
 
 ```
-baseline(0–30m) step-up high(30–60m)
-normal(0–20m) volatile elevated(20–45m) spike peak(45–47m) recovery elevated(47–60m)
+baseline(0-30m) step-up high(30-60m)
+normal(0-20m) volatile elevated(20-45m) spike peak(45-47m) recovery elevated(47-60m)
 ```
 
 prose carries magnitude + timing + shape in a sentence:
 
 > "Flat at baseline until T+30m, then a sharp step up to a sustained high
-> plateau (~14× base) through the end of the window."
+> plateau (~14x base) through the end of the window."
 
 Summaries show `shape_code` (terse, scannable); drill-down (`service <id>`)
 adds the prose.
@@ -95,10 +95,10 @@ starts). It learns levers as it reaches for them.
 
   ```
   anomalies (vs pre-deploy): 6 movers
-    payments-db    p99 ×14   onset T+30m   baseline(0–30m) step-up high(30–60m)
-    payments-api   p99 ×6    onset T+31m   baseline(0–31m) ramp high(31–60m)
+    payments-db    p99 x14   onset T+30m   baseline(0-30m) step-up high(30-60m)
+    payments-api   p99 x6    onset T+31m   baseline(0-31m) ramp high(31-60m)
     ...
-  → next: weaver service payments-db --base pre-deploy   (characterize a mover)
+  next: weaver service payments-db --base pre-deploy   (characterize a mover)
           weaver blast-radius payments-db                (does its downstream cover the alerts?)
           weaver timeline                                (who moved first?)
   ```

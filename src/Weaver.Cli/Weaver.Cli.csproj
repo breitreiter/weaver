@@ -2,10 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Weaver.Contracts\Weaver.Contracts.csproj" />
+    <ProjectReference Include="..\Weaver.Core\Weaver.Core.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <AssemblyName>weaver</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
