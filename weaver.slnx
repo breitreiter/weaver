@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Weaver.Api/Weaver.Api.csproj" />
+    <Project Path="src/Weaver.Cli/Weaver.Cli.csproj" />
+    <Project Path="src/Weaver.Contracts/Weaver.Contracts.csproj" />
+    <Project Path="src/Weaver.Core/Weaver.Core.csproj" />
+  </Folder>
+</Solution>

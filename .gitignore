@@ -1,0 +1,30 @@
+# --- weaver private / local-only (never commit) ---
+project/private/
+*.local.md
+*.local.json
+
+# --- generated exemplar data (regenerate with tools/datagen/generate.py) ---
+# Source of truth is data/*.yaml + the generator; the .db is a build artifact.
+data/*.db
+data/*.db-journal
+
+# --- .NET ---
+bin/
+obj/
+*.user
+.vs/
+
+# --- Node / React ---
+node_modules/
+dist/
+build/
+.vite/
+*.log
+npm-debug.log*
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+
+# --- Claude Code local (personal) settings ---
+.claude/settings.local.json

@@ -1,0 +1,181 @@
+# weaver — exemplar topology (the HEALTHY system)
+#
+# This is the authored source of truth for the demo's service graph. It is
+# deliberately human-readable and diffable: reviewing a topology change should
+# be reviewing this file, never a binary .db.
+#
+# What lives here:  the *structure* — services (nodes), dependencies (edges),
+#                   and request routes. Plus per-service/-kind baseline metric
+#                   distributions describing each service's NORMAL operating
+#                   behaviour, which the generator samples from.
+# What does NOT:    health/status. There is no "this service is sick" flag
+#                   anywhere — health is only ever derived from metrics by a
+#                   consumer (see data-model.md "a mystery, not an oracle"). The
+#                   generator emits raw observed telemetry; no analysis, no labels.
+#
+# This file describes a HEALTHY system. Everything it generates is nominal —
+# the calm baseline a future investigation would compare against. (Failure
+# scenarios are a separate, later concern and are deliberately not modeled here.)
+#
+# Modeled domain: a mid-size e-commerce system, ~24 services across 9 subsystems.
+
+# ---------------------------------------------------------------------------
+# Generation window & cadence (overridable on the CLI).
+# ---------------------------------------------------------------------------
+window:
+  # Start is authored so the data is fully deterministic and diffable. UTC.
+  start: "2026-06-08T14:00:00Z"
+  minutes: 120
+  sample_seconds: 30
+
+# ---------------------------------------------------------------------------
+# Baseline metric profiles by service kind. The generator draws each sample
+# from these (with mild noise + a gentle diurnal wobble) for the calm baseline.
+# Units: latency in ms, error_rate as a fraction 0..1, throughput in rps,
+# saturation 0..1. db/cache/queue carry a couple of extra series.
+# ---------------------------------------------------------------------------
+kind_baselines:
+  gateway:   { latency_p50: 8,   latency_p99: 45,  error_rate: 0.002, throughput_rps: 850, saturation: 0.35 }
+  api:       { latency_p50: 18,  latency_p99: 90,  error_rate: 0.004, throughput_rps: 320, saturation: 0.40 }
+  worker:    { latency_p50: 120, latency_p99: 600, error_rate: 0.006, throughput_rps: 40,  saturation: 0.45 }
+  db:        { latency_p50: 4,   latency_p99: 28,  error_rate: 0.001, throughput_rps: 500, saturation: 0.45, pool_used: 12, pool_max: 50 }
+  cache:     { latency_p50: 1,   latency_p99: 6,   error_rate: 0.0005,throughput_rps: 900, saturation: 0.30 }
+  queue:     { latency_p50: 5,   latency_p99: 30,  error_rate: 0.001, throughput_rps: 60,  saturation: 0.25, queue_depth: 30 }
+  external:  { latency_p50: 60,  latency_p99: 240, error_rate: 0.008, throughput_rps: 90,  saturation: 0.20 }
+
+# ---------------------------------------------------------------------------
+# Services (nodes). No status column — by design.
+#   kind:      gateway|api|worker|db|cache|queue|external
+#   subsystem: grouping for "collapse healthy subsystems"
+#   owner_team:flavor + possible analysis signal
+# Per-service overrides under `metrics:` tweak the kind baseline (e.g. a hotter
+# db, a chattier gateway).
+# ---------------------------------------------------------------------------
+services:
+  # --- edge ---------------------------------------------------------------
+  - { id: web-gateway,        name: "Web Gateway",          kind: gateway,  subsystem: edge,         owner_team: platform }
+
+  # --- storefront ---------------------------------------------------------
+  - { id: storefront-bff,     name: "Storefront BFF",       kind: api,      subsystem: storefront,   owner_team: storefront }
+  - { id: recommendations,    name: "Recommendations",      kind: api,      subsystem: storefront,   owner_team: discovery }
+
+  # --- catalog ------------------------------------------------------------
+  - { id: product-api,        name: "Product API",          kind: api,      subsystem: catalog,      owner_team: catalog }
+  - { id: search-api,         name: "Search API",           kind: api,      subsystem: catalog,      owner_team: discovery }
+  - { id: catalog-db,         name: "Catalog DB",           kind: db,       subsystem: catalog,      owner_team: catalog,
+      metrics: { throughput_rps: 700, saturation: 0.50 } }
+
+  # --- identity -----------------------------------------------------------
+  - { id: auth-api,           name: "Auth API",             kind: api,      subsystem: identity,     owner_team: identity }
+  - { id: session-cache,      name: "Session Cache",        kind: cache,    subsystem: identity,     owner_team: identity }
+  - { id: user-db,            name: "User DB",              kind: db,       subsystem: identity,     owner_team: identity }
+
+  # --- cart ---------------------------------------------------------------
+  - { id: cart-api,           name: "Cart API",             kind: api,      subsystem: cart,         owner_team: checkout }
+  - { id: cart-cache,         name: "Cart Cache",           kind: cache,    subsystem: cart,         owner_team: checkout }
+
+  # --- checkout -----------------------------------------------------------
+  - { id: checkout-api,       name: "Checkout API",         kind: api,      subsystem: checkout,     owner_team: checkout }
+  - { id: pricing-api,        name: "Pricing API",          kind: api,      subsystem: checkout,     owner_team: checkout }
+
+  # --- payments -----------------------------------------------------------
+  - { id: payments-api,       name: "Payments API",         kind: api,      subsystem: payments,     owner_team: payments }
+  - { id: payments-db,        name: "Payments DB",          kind: db,       subsystem: payments,     owner_team: payments,
+      # A smaller connection pool than the default db, as money-path databases
+      # often run. Just a config value — nothing here is "unhealthy".
+      metrics: { pool_max: 40, pool_used: 14, throughput_rps: 260, saturation: 0.50 } }
+  - { id: payment-gateway,    name: "Payment Gateway (ext)",kind: external, subsystem: payments,     owner_team: payments }
+  - { id: fraud-check,        name: "Fraud Check",          kind: api,      subsystem: payments,     owner_team: risk }
+
+  # --- orders -------------------------------------------------------------
+  - { id: orders-api,         name: "Orders API",           kind: api,      subsystem: orders,       owner_team: orders }
+  - { id: orders-db,          name: "Orders DB",            kind: db,       subsystem: orders,       owner_team: orders }
+  - { id: order-events,       name: "Order Events",         kind: queue,    subsystem: orders,       owner_team: orders }
+
+  # --- fulfillment --------------------------------------------------------
+  - { id: fulfillment-worker, name: "Fulfillment Worker",   kind: worker,   subsystem: fulfillment,  owner_team: fulfillment }
+  - { id: inventory-api,      name: "Inventory API",        kind: api,      subsystem: fulfillment,  owner_team: fulfillment }
+  - { id: inventory-db,       name: "Inventory DB",         kind: db,       subsystem: fulfillment,  owner_team: fulfillment }
+
+  # --- notifications ------------------------------------------------------
+  - { id: notifications-worker, name: "Notifications Worker", kind: worker, subsystem: notifications, owner_team: messaging }
+
+# ---------------------------------------------------------------------------
+# Dependencies (edges). Direction is load-bearing:
+#   from_service DEPENDS ON to_service.
+# If `to` degrades, `from`'s degradation is *explained* by it. No status column.
+#   kind:     sync_http|grpc|db_query|cache_get|async_publish
+#   critical: on a critical user path
+# id convention: "<from>__<to>"
+# ---------------------------------------------------------------------------
+dependencies:
+  # edge → storefront / identity
+  - { id: web-gateway__storefront-bff, from_service: web-gateway,   to_service: storefront-bff, kind: sync_http, critical: true }
+  - { id: web-gateway__auth-api,       from_service: web-gateway,   to_service: auth-api,       kind: sync_http, critical: true }
+
+  # storefront fan-out
+  - { id: storefront-bff__product-api,     from_service: storefront-bff, to_service: product-api,     kind: sync_http, critical: true }
+  - { id: storefront-bff__search-api,      from_service: storefront-bff, to_service: search-api,      kind: sync_http }
+  - { id: storefront-bff__recommendations, from_service: storefront-bff, to_service: recommendations, kind: sync_http }
+  - { id: storefront-bff__cart-api,        from_service: storefront-bff, to_service: cart-api,        kind: sync_http, critical: true }
+  - { id: storefront-bff__checkout-api,    from_service: storefront-bff, to_service: checkout-api,    kind: sync_http, critical: true }
+
+  # catalog
+  - { id: product-api__catalog-db,      from_service: product-api,     to_service: catalog-db, kind: db_query, critical: true }
+  - { id: search-api__catalog-db,       from_service: search-api,      to_service: catalog-db, kind: db_query }
+  - { id: recommendations__product-api, from_service: recommendations, to_service: product-api, kind: sync_http }
+  - { id: recommendations__catalog-db,  from_service: recommendations, to_service: catalog-db,  kind: db_query }
+
+  # identity
+  - { id: auth-api__user-db,         from_service: auth-api, to_service: user-db,       kind: db_query,  critical: true }
+  - { id: auth-api__session-cache,   from_service: auth-api, to_service: session-cache, kind: cache_get, critical: true }
+
+  # cart
+  - { id: cart-api__cart-cache,   from_service: cart-api, to_service: cart-cache,  kind: cache_get, critical: true }
+  - { id: cart-api__product-api,  from_service: cart-api, to_service: product-api, kind: sync_http }
+
+  # checkout fan-out (the money path)
+  - { id: checkout-api__cart-api,     from_service: checkout-api, to_service: cart-api,     kind: sync_http, critical: true }
+  - { id: checkout-api__pricing-api,  from_service: checkout-api, to_service: pricing-api,  kind: sync_http, critical: true }
+  - { id: checkout-api__auth-api,     from_service: checkout-api, to_service: auth-api,     kind: sync_http }
+  - { id: checkout-api__inventory-api,from_service: checkout-api, to_service: inventory-api,kind: sync_http, critical: true }
+  - { id: checkout-api__payments-api, from_service: checkout-api, to_service: payments-api, kind: sync_http, critical: true }
+  - { id: checkout-api__orders-api,   from_service: checkout-api, to_service: orders-api,   kind: sync_http, critical: true }
+
+  # pricing
+  - { id: pricing-api__catalog-db,    from_service: pricing-api, to_service: catalog-db,    kind: db_query }
+  - { id: pricing-api__inventory-api, from_service: pricing-api, to_service: inventory-api, kind: sync_http }
+
+  # payments (culprit lives at the bottom here: payments-db)
+  - { id: payments-api__payments-db,     from_service: payments-api, to_service: payments-db,     kind: db_query,  critical: true }
+  - { id: payments-api__payment-gateway, from_service: payments-api, to_service: payment-gateway, kind: sync_http, critical: true }
+  - { id: payments-api__fraud-check,     from_service: payments-api, to_service: fraud-check,     kind: sync_http }
+  - { id: fraud-check__user-db,          from_service: fraud-check,  to_service: user-db,         kind: db_query }
+
+  # orders
+  - { id: orders-api__orders-db,      from_service: orders-api, to_service: orders-db,    kind: db_query,      critical: true }
+  - { id: orders-api__order-events,   from_service: orders-api, to_service: order-events, kind: async_publish, critical: true }
+  - { id: orders-api__inventory-api,  from_service: orders-api, to_service: inventory-api,kind: sync_http }
+
+  # fulfillment + notifications (async consumers of order-events)
+  - { id: fulfillment-worker__order-events,   from_service: fulfillment-worker,   to_service: order-events, kind: async_publish, critical: true }
+  - { id: fulfillment-worker__inventory-api,  from_service: fulfillment-worker,   to_service: inventory-api,kind: sync_http }
+  - { id: fulfillment-worker__orders-db,      from_service: fulfillment-worker,   to_service: orders-db,    kind: db_query }
+  - { id: inventory-api__inventory-db,        from_service: inventory-api,        to_service: inventory-db, kind: db_query, critical: true }
+  - { id: notifications-worker__order-events, from_service: notifications-worker, to_service: order-events, kind: async_publish }
+
+# ---------------------------------------------------------------------------
+# Request types (routes). A route is an ordered list of service ids whose
+# consecutive pairs are existing dependencies. The generator walks these to
+# synthesize traces; `weight` is relative request frequency (drives load).
+# The end-user feels the route at its first hop (web-gateway).
+# ---------------------------------------------------------------------------
+request_types:
+  - { id: browse,       name: "Browse products",   weight: 0.32, path: [web-gateway, storefront-bff, product-api, catalog-db] }
+  - { id: search,       name: "Search catalog",    weight: 0.18, path: [web-gateway, storefront-bff, search-api, catalog-db] }
+  - { id: recommend,    name: "Get recommendations",weight: 0.10, path: [web-gateway, storefront-bff, recommendations, product-api] }
+  - { id: view-cart,    name: "View cart",         weight: 0.12, path: [web-gateway, storefront-bff, cart-api, cart-cache] }
+  - { id: login,        name: "Log in",            weight: 0.08, path: [web-gateway, auth-api, user-db] }
+  # The money path: checkout → payments → payments-db.
+  - { id: checkout,     name: "Checkout / pay",    weight: 0.12, path: [web-gateway, storefront-bff, checkout-api, payments-api, payments-db] }
+  - { id: place-order,  name: "Place order",       weight: 0.08, path: [web-gateway, storefront-bff, checkout-api, orders-api, orders-db] }
