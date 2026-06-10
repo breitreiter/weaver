@@ -23,6 +23,7 @@ try
         case "logs": Logs(); break;
         case "traces": Traces(); break;
         case "trace": Trace(); break;
+        case "changes": Changes(); break;
         case "blast-radius": BlastRadius(); break;
         case "anomalies": Anomalies(); break;
         case "timeline": Timeline(); break;
@@ -51,6 +52,7 @@ void Help()
           logs [<id>] [--grep q]        log lines (FTS via --grep)
           traces [--route r]            sampled request traces, slowest first
           trace <id>                    one trace: spans + where self-time went
+          changes [--target s]          deploy/config/flag events (annotation stream)
 
         correlate (enumerations, never a verdict)
           anomalies [--split t] [--z n] what moved vs the base window
@@ -187,9 +189,29 @@ void Trace()
     {
         var hot = s.SelfMs == maxSelf && maxSelf > 0 ? "  <- most self-time" : "";
         Console.WriteLine($"  {new string(' ', depth * 2)}{s.ServiceId,-18} self {s.SelfMs,4}ms  dur {s.DurationMs,4}ms  {s.Status}{hot}");
+        if (s.Attributes.ValueKind == JsonValueKind.Object && s.Attributes.EnumerateObject().Any())
+            Console.WriteLine($"  {new string(' ', depth * 2)}    {string.Join("  ", s.Attributes.EnumerateObject().Select(p => $"{p.Name}={p.Value}"))}");
         depth++;
     }
     Hint($"weaver service {d.Spans.LastOrDefault()?.ServiceId ?? "<id>"}");
+}
+
+void Changes()
+{
+    var qs = "/api/change-events?";
+    if (argv.Opt("from") is { } f) qs += $"from={Uri.EscapeDataString(f)}&";
+    if (argv.Opt("to") is { } t) qs += $"to={Uri.EscapeDataString(t)}&";
+    if (argv.Opt("target") is { } tg) qs += $"target={tg}&";
+
+    var rows = api.Get<List<ChangeEventDto>>(qs);
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+    if (rows.Count == 0) { Console.WriteLine("no change events in range (deploys/config/flags)."); return; }
+
+    Console.WriteLine($"{rows.Count} change event(s):");
+    Console.WriteLine($"  {"when",-10} {"kind",-12} {"target",-16} summary");
+    foreach (var c in rows)
+        Console.WriteLine($"  {Clock(c.Ts),-10} {c.Kind,-12} {c.TargetId ?? "(fleet)",-16} {c.Summary}");
+    Hint("weaver pin --kind change --ref <service> --label \"...\"   (pin a deploy as evidence)");
 }
 
 void BlastRadius()
