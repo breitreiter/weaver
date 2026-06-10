@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 using System.Text.Json;
 using Weaver.Contracts;
 using Weaver.Core;
@@ -61,6 +62,17 @@ app.MapGet("/api/services/{id}", (WeaverDbContext db, string id) =>
     var dependsOn = db.Dependencies.Where(d => d.FromService == id).ToList().Select(ToDepDto).ToList();
     var dependedOnBy = db.Dependencies.Where(d => d.ToService == id).ToList().Select(ToDepDto).ToList();
     return Results.Ok(new ServiceDetailDto(ToServiceDto(s), dependsOn, dependedOnBy));
+});
+
+// Real relationships between two on-board nodes — the observed facts the operator
+// can ground a red string in when they draw a line. Enumerates (direct dependency,
+// shared route, temporal precedence); never crowns one as the cause. Direction
+// comes from the data, not the drag.
+app.MapGet("/api/relationships", (WeaverDbContext db, string a, string b) =>
+{
+    if (db.Services.FirstOrDefault(s => s.Id == a) is null) return Results.NotFound(new { error = $"unknown service '{a}'" });
+    if (db.Services.FirstOrDefault(s => s.Id == b) is null) return Results.NotFound(new { error = $"unknown service '{b}'" });
+    return Results.Ok(new RelationshipsDto(a, b, RelationshipsBetween(db, a, b)));
 });
 
 // --- metrics (raw series for one subject; bounded by subjectId) ----------
@@ -340,6 +352,108 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
     }
 });
 
+// --- search: volume histogram (honest counts over the FULL matching set) ----
+// Mirrors the /api/search filters per scope, but COUNTS every matching row
+// bucketed by time — never the capped, sorted result page. This is the only
+// honest source for the chart-wall volume layer (logs|traces|changes); binning
+// the search page would chart "the top 60", not the volume.
+app.MapGet("/api/search/histogram", (WeaverDbContext db, string? scope, string? q,
+    string? subsystem, string? kind, string? team,
+    string? level, string? template, string? route, string? status, int? minMs,
+    string? from, string? to, long? bucketMs) =>
+{
+    scope ??= "logs";
+    if (scope is not ("logs" or "traces" or "changes"))
+        return Results.BadRequest(new { error = $"histogram supports logs|traces|changes (got '{scope}')" });
+
+    // subsystem/kind/team facet -> set of service ids (mirrors /api/search `pass`)
+    HashSet<string>? svc = null;
+    if (subsystem is not null || kind is not null || team is not null)
+    {
+        var sq = db.Services.AsQueryable();
+        if (subsystem is not null) sq = sq.Where(s => s.Subsystem == subsystem);
+        if (kind is not null) sq = sq.Where(s => s.Kind == kind);
+        if (team is not null) sq = sq.Where(s => s.OwnerTeam == team);
+        svc = sq.Select(s => s.Id).ToHashSet();
+    }
+
+    // pull only the timestamps of the full matching set — no limit, no ordering
+    List<string> stamps;
+    switch (scope)
+    {
+        case "logs":
+        {
+            IQueryable<LogEventEntity> lq = string.IsNullOrWhiteSpace(q)
+                ? db.Logs
+                : db.Logs.FromSqlInterpolated($@"
+                    SELECT le.* FROM log_events le
+                    JOIN log_events_fts f ON le.rowid = f.rowid
+                    WHERE log_events_fts MATCH {q}");
+            if (level is not null) lq = lq.Where(l => l.Level == level);
+            if (template is not null) lq = lq.Where(l => l.TemplateId == template);
+            if (from is not null) lq = lq.Where(l => string.Compare(l.Ts, from) >= 0);
+            if (to is not null) lq = lq.Where(l => string.Compare(l.Ts, to) <= 0);
+            stamps = lq.Select(l => new { l.Ts, l.ServiceId }).ToList()
+                .Where(r => svc is null || svc.Contains(r.ServiceId)).Select(r => r.Ts).ToList();
+            break;
+        }
+        case "traces":
+        {
+            // traces expose only route/status/minMs facets (no subsystem) — mirror that
+            var tq = db.Traces.AsQueryable();
+            if (route is not null) tq = tq.Where(t => t.RequestTypeId == route);
+            if (status is not null) tq = tq.Where(t => t.Status == status);
+            if (minMs is not null) tq = tq.Where(t => t.DurationMs >= minMs);
+            if (from is not null) tq = tq.Where(t => string.Compare(t.StartedAt, from) >= 0);
+            if (to is not null) tq = tq.Where(t => string.Compare(t.StartedAt, to) <= 0);
+            stamps = tq.Select(t => t.StartedAt).ToList();
+            break;
+        }
+        default: // changes — fleet-wide always pass; targeted pass the svc facet
+        {
+            stamps = ChangeEvents(db, from, to, null)
+                .Where(c => c.TargetId is null || svc is null || svc.Contains(c.TargetId))
+                .Select(c => c.Ts).ToList();
+            break;
+        }
+    }
+
+    // window: explicit from/to, else the global telemetry window so stacked
+    // volume panels share one time axis by default.
+    var winStart = from ?? db.MetricSamples.Min(m => m.Ts)!;
+    var winEnd = to ?? db.MetricSamples.Max(m => m.Ts)!;
+    var startMs = DateTimeOffset.Parse(winStart, CultureInfo.InvariantCulture).ToUnixTimeMilliseconds();
+    var endMs = DateTimeOffset.Parse(winEnd, CultureInfo.InvariantCulture).ToUnixTimeMilliseconds();
+    if (endMs <= startMs) endMs = startMs + 1;
+
+    var bucket = bucketMs ?? NiceBucketMs((endMs - startMs) / 60.0);
+    if (bucket < 1) bucket = 1;
+    var n = Math.Min(2000, (int)Math.Ceiling((endMs - startMs) / (double)bucket));
+    if (n < 1) n = 1;
+
+    var counts = new int[n];
+    foreach (var s in stamps)
+    {
+        var ms = DateTimeOffset.Parse(s, CultureInfo.InvariantCulture).ToUnixTimeMilliseconds();
+        if (ms < startMs || ms > endMs) continue;
+        var idx = (int)((ms - startMs) / bucket);
+        if (idx >= n) idx = n - 1;
+        counts[idx]++;
+    }
+
+    var buckets = new List<HistogramBucketDto>(n);
+    for (var i = 0; i < n; i++)
+    {
+        var bms = startMs + (long)i * bucket;
+        buckets.Add(new HistogramBucketDto(
+            DateTimeOffset.FromUnixTimeMilliseconds(bms).UtcDateTime
+                .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+            bms, counts[i]));
+    }
+
+    return Results.Ok(new HistogramDto(scope, new WindowDto(winStart, winEnd), bucket, counts.Sum(), buckets));
+});
+
 // --- node evidence dossier (powers the evidence panel + the pin menu) ------
 app.MapGet("/api/nodes/{id}/evidence", (WeaverDbContext db, string id, string? from, string? to) =>
 {
@@ -440,6 +554,83 @@ static List<string> ChangeKinds(WeaverDbContext db)
 {
     try { return db.ChangeEvents.Select(c => c.Kind).Distinct().OrderBy(x => x).ToList(); }
     catch (Microsoft.Data.Sqlite.SqliteException) { return []; }
+}
+
+// Enumerate the observed relationships between two services — facts only, no
+// ranking. Direct dependencies (either direction), shared request-type paths,
+// and temporal anomaly precedence. Direction is taken from the data, not the
+// drag, so the drawn edge points the way the fact does.
+static List<RelationshipDto> RelationshipsBetween(WeaverDbContext db, string a, string b)
+{
+    var rels = new List<RelationshipDto>();
+
+    // 1. direct dependencies (either direction) — the strongest "real edge".
+    foreach (var d in db.Dependencies
+        .Where(d => (d.FromService == a && d.ToService == b) || (d.FromService == b && d.ToService == a))
+        .ToList())
+    {
+        var crit = d.Critical == true ? " · critical" : "";
+        rels.Add(new RelationshipDto("dependency", d.FromService, d.ToService, "dependency",
+            $"{d.Kind}{crit}",
+            $"{d.FromService} calls {d.ToService} directly ({d.Kind})",
+            $"depends on ({d.Kind})",
+            new { d.Id, d.Kind, d.Critical }));
+    }
+
+    // 2. shared request-type paths — both services sit on the same route; the
+    // path order gives the direction (upstream → downstream).
+    foreach (var r in db.RequestTypes.ToList())
+    {
+        var path = JsonSerializer.Deserialize<string[]>(r.Path) ?? [];
+        int ia = Array.IndexOf(path, a), ib = Array.IndexOf(path, b);
+        if (ia < 0 || ib < 0) continue;
+        var (from, to) = ia <= ib ? (a, b) : (b, a);
+        rels.Add(new RelationshipDto("route", from, to, "route",
+            $"on route {r.Name}",
+            $"{from} precedes {to} on {r.Name} ({path.Length} hops)",
+            $"co-located on {r.Name}",
+            new { route = r.Id, r.Name, hops = path.Length }));
+    }
+
+    // 3. temporal precedence — both moved; order by anomaly onset. Reading
+    // precedence as causation stays the operator's call, so this draws a red string.
+    var (series, at) = LoadSeries(db, null);
+    var onsets = Analysis.Anomalies(series.Where(s => s.Kind == "service" && (s.Id == a || s.Id == b)), at, 3.0, 15.0)
+        .Where(x => x.OnsetTs is not null)
+        .GroupBy(x => x.SubjectId)
+        .ToDictionary(g => g.Key, g => g.OrderBy(x => x.OnsetTs, StringComparer.Ordinal).First());
+    if (onsets.TryGetValue(a, out var oa) && onsets.TryGetValue(b, out var ob))
+    {
+        var (first, second) = string.Compare(oa.OnsetTs, ob.OnsetTs, StringComparison.Ordinal) <= 0 ? (oa, ob) : (ob, oa);
+        var dm = Math.Round((DateTimeOffset.Parse(second.OnsetTs!) - DateTimeOffset.Parse(first.OnsetTs!)).TotalMinutes);
+        rels.Add(new RelationshipDto("temporal", first.SubjectId, second.SubjectId, "temporal",
+            dm > 0 ? $"moved {dm:0}m before {second.SubjectId}" : $"moved together with {second.SubjectId}",
+            $"{first.SubjectId} {first.Metric} shifted {first.OnsetTs}; {second.SubjectId} {second.Metric} at {second.OnsetTs}",
+            dm > 0 ? $"preceded by {dm:0}m" : "co-onset",
+            new
+            {
+                first = new { first.SubjectId, first.Metric, first.OnsetTs },
+                second = new { second.SubjectId, second.Metric, second.OnsetTs },
+                deltaMin = dm,
+            }));
+    }
+
+    return rels;
+}
+
+// snap a raw bucket width to the nearest human-friendly value (~60 buckets/window)
+static long NiceBucketMs(double rawMs)
+{
+    long[] ladder =
+    [
+        1000, 2000, 5000, 10_000, 15_000, 30_000,        // 1s .. 30s
+        60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000,  // 1m .. 30m
+        3_600_000, 7_200_000, 21_600_000, 86_400_000,    // 1h .. 1d
+    ];
+    var best = ladder[0];
+    foreach (var step in ladder)
+        if (Math.Abs(step - rawMs) < Math.Abs(best - rawMs)) best = step;
+    return best;
 }
 
 static string UnitFor(string metric) =>

@@ -84,6 +84,22 @@ public record AnomalyDto(
 // Earliest onset per subject — orders precedence, crowns nothing.
 public record TimelineEntryDto(string SubjectId, string SubjectKind, string Metric, string OnsetTs, double Z);
 
+// The observed relationships between two on-board nodes — facts the operator can
+// ground a red string in (direct dependency, shared route, temporal precedence).
+// Enumerates what the data holds; never ranks one as the cause. From/To carry the
+// relationship's real direction (may differ from the drag). See sensemaking-pivot.md.
+public record RelationshipDto(
+    string Group,            // dependency | route | temporal
+    string From,
+    string To,
+    string EdgeKind,         // board edge kind this would draw (dependency | route | temporal)
+    string Title,
+    string Detail,
+    string SuggestedLabel,
+    object? Evidence);
+
+public record RelationshipsDto(string A, string B, IReadOnlyList<RelationshipDto> Relationships);
+
 // --- the board (sensemaking; co-built by human + agent) ------------------
 
 public record BoardItemDto(string Id, string Kind, string Ref, JsonElement? Evidence, string? Label, double? X, double? Y);
@@ -123,6 +139,14 @@ public record PinTargetDto(IReadOnlyList<string> NodeIds, EvidenceRefDto? Eviden
 
 // A single typed, self-describing, pre-resolved-for-pinning search result.
 public record SearchResultDto(string Type, string Id, string Title, string Subtitle, object? Payload, PinTargetDto Pin);
+
+// search histogram: honest volume-over-time. Counts the FULL matching set
+// bucketed by time — never the capped result page. Powers the chart-wall volume
+// layer (logs|traces|changes). StartMs is epoch-ms for a numeric time axis; Ts
+// is the bucket-start ISO for tooltips.
+public record HistogramBucketDto(string Ts, long StartMs, int Count);
+public record HistogramDto(string Scope, WindowDto Window, long BucketMs, int Total,
+    IReadOnlyList<HistogramBucketDto> Buckets);
 
 // node-evidence dossier
 public record NodeSignalDto(string Metric, string ShapeCode, string Prose);
