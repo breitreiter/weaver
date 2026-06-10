@@ -55,29 +55,59 @@ adjudicates. (Same surface, human or agent — parity holds.)
 
 ## Components
 
-### Left — search / query language *(biggest open design piece)*
+### Left — search *(the main event; biggest open design piece)*
 
-One "ask" box returning pinnable rows. Unify what we already have:
+This must feel like **legit search**, not a toy command box. It also gets the
+**bulk of the screen — ≥50–60%.** The board is a secondary *evidence anchor*,
+not the center of attention; the operator lives in search most of the time.
 
-- selector grammar — `anomalous`, `blast-radius(x)`, `subsystem:payments`,
-  `downstream-of(x)`
-- free-text log search (FTS5)
-- the analysis verbs — `anomalies`, `timeline`, metrics/traces queries
+What "legit search" means here:
 
-Results are *raw-ish enumerations* (facts, never verdicts). Any row — or a whole
-result set — is pinnable.
+- **Structured query** — facets/filters (subsystem, kind, signal, level, route,
+  window, threshold) alongside free text. Unify the selector grammar
+  (`anomalous`, `blast-radius(x)`, `subsystem:payments`), log FTS5, and the
+  analysis verbs (`anomalies`, `timeline`, metrics/traces).
+- **Rich, type-aware result cards** — each result rendered for its kind, not a
+  flat row.
+- **Every result states its data type** — service / edge / anomaly / log /
+  trace / metric.
+- **Traces are a distinct, sparse, rich type** — *not* a node. A trace result is
+  a span breakdown (where `self_ms` went) and needs its own card shape. The
+  heterogeneity (mostly node-shaped, but traces are paths) is the part that
+  "needs a lot of love."
+
+Results are *raw-ish enumerations* (facts, never verdicts). Any result — or a
+whole set — is pinnable to the board. The query-layer API (facets / structured
+search / node-evidence) is specced in `search-api.md` — no schema change, and
+each result carries its own `pin` (node + evidence).
 
 ### Right — the board (data model)
 
-- **Board** `{ id, title, createdAt, items[], edges[], notes? }`
-- **BoardItem** (a pin) `{ id, kind: service|edge|log|anomaly|trace|metric|note,
-  ref, evidence (snapshot that justified the pin: a shape_code / log line /
-  anomaly delta), x?, y? (placement), label? }`
-- **BoardEdge** `{ id, from, to, kind: dependency|causal|temporal|custom, label?,
-  drawnBy: human|agent }` — dependency edges are tool-supplied facts;
-  causal/temporal are the red string.
-- Every pin carries its **provenance** — the board is self-justifying (every
-  pixel accountable to evidence).
+**The atom of the board is a node (a service).** Pinning a trace / metric / log
+is *not* a new kind of graph object — it expresses interest in **node X, at time
+T, regarding aspect E**, which puts X on the wall and **layers that finding onto
+it as evidence.** The trace/metric/log is the *justification*, not a wall
+primitive; a multi-node trace layers onto its participant nodes. So the board
+stays homogeneous (nodes + red string) and all heterogeneity lives in the
+evidence attached to nodes.
+
+- **Board** `{ id, title, createdAt }`
+- **BoardNode** (the only wall primitive) `{ id, serviceId, label?, x?, y? }` —
+  one per service pinned; pinning the same service again just adds evidence.
+- **Evidence** (layered onto a node) `{ id, nodeId, kind: metric|log|trace|anomaly,
+  aspect (e.g. "latency_p99" / "db.pool.timeout" / "route:checkout"), at (time t
+  or window), payload (the snapshot: shape_code / log line / span breakdown /
+  delta), note? }` — the (node, time, aspect) triple is the *interest*; the
+  payload is the proof.
+- **BoardEdge** (red string) `{ id, from, to, kind: dependency|causal|temporal,
+  label?, drawnBy: human|agent }` — dependency edges are tool-supplied facts;
+  causal/temporal are the operator's red string.
+- Every node is self-justifying via its evidence (every pixel accountable).
+
+> **Note:** the shipped v1 backend models a pin as `BoardItem{kind, ref,
+> evidence}` (kind conflated onto the item). The rework splits that into
+> **BoardNode + layered Evidence** per the above — done together with the
+> left-panel v2 and the board render.
 
 ### Persistence — a separate, writable store
 

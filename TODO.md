@@ -9,13 +9,35 @@ sensemake (wall of red string) right. **This replaces the auto-neighborhood
 graph** (which read as a hairball — now impossible by construction). The board
 is co-built by human *and* Claude.
 
-- [ ] **1. Board backend** — writable board store (separate from the read-only
-      telemetry DB) + API: create board / pin item / add edge / get board.
-- [ ] **2. CLI lift** — `pin` / `link` / `board` verbs so the agent forages →
-      pins → draws red string → hands over a URL.
-- [ ] **3. Left panel** — search/query GUI over the primitives; pinnable results.
+- [x] **1. Board backend** — writable store + create/pin/link/get. Done.
+- [x] **2. CLI lift** — `board` / `pin` / `link` verbs. Done.
+- [x] **3. Left panel v1** — command box + pinnable rows. Shipped — but needs a
+      real rework (below) before it's "legit search".
 - [ ] **4. Right panel** — render the board: pinned nodes + dependency edges +
-      red-string edges + evidence; manual placement.
+      red-string edges + evidence; manual placement. *Blocked on Figma.*
+
+### Left panel v2 — make it feel like legit search (rework)
+
+- [ ] **Take ≥50–60% of the screen.** The board is a secondary *evidence anchor*,
+      not the main attraction — search is where attention lives most of the time.
+      Currently search is a 440px sidebar; flip the weighting.
+- [ ] **Structured query**, not just a command box — facets / filters (subsystem,
+      kind, signal, level, route, window, threshold) alongside free text.
+- [ ] **Rich, type-aware result cards** — render each result for its kind, not a
+      flat one-line row.
+- [ ] **Every result states its data type** (service / edge / anomaly / log /
+      trace / metric).
+- [ ] **Traces are a distinct, sparse, rich type** — not a node. A trace result is
+      a span breakdown (where `self_ms` went), so it needs its own card shape.
+      This whole result-typing problem "needs a lot of love."
+- [ ] **Board model refactor**: a pin = **node + layered evidence** (interest in
+      node x + time t + aspect e), not the v1 item-with-kind. Touches the backend
+      (BoardNode + Evidence), the pin verbs/UI, and the board render. Do it with
+      the rework. See `project/plans/sensemaking-pivot.md`.
+- [ ] **Build the search API** — facets / structured search / node-evidence
+      endpoints, specced in `project/plans/search-api.md`. Query-layer only over
+      the read-only telemetry; no schema change. Each search result carries its
+      `pin` (node + evidence), so it drops straight onto the refactored board.
 
 ## Design to lock first
 
