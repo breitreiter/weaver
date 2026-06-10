@@ -104,6 +104,30 @@ scale while the architecture stays honest about the real world.
   "live ingested stream" behind it. The query/observation surface is
   identical.
 
+## Causality: the operator asserts it, not a Pearlian causal model
+
+- **The big-hammer temptation:** formal causal inference — a Pearlian
+  causal graph / do-calculus / causal-discovery layer that *computes* "X
+  caused Y."
+- **Demo choice:** weaver **does not assert causality at all.** It
+  enumerates the evidence that bears on cause — onset precedence
+  (`timeline`), reachability (`blast-radius`), cause-vs-collateral log
+  texture — and the **operator draws the causal conclusion** (the red
+  string), bringing domain expertise the tool can't encode.
+- **Why it's right here:** building a *real* causal model of a live
+  service network is genuinely hard — confounders, non-stationarity, no
+  controlled interventions, a topology that changes under you. A faked
+  one would be **super fake**, and a confidently-wrong causal claim is
+  worse than none: it's the oracle/black-box this project argues against.
+  Deferring causality to the operator is the honest design, not a cop-out
+  — it's the same enumerate-vs-discriminate line (`analysis-architecture.md`):
+  the tool enumerates, the reasoner discriminates.
+- **IRL / the seam:** causal inference is a real field, and at scale you'd
+  *assist* the operator with it (rank candidate causes, flag likely
+  confounders) — but as a **suggestion the human adjudicates**, never an
+  asserted verdict. The interface (operator/agent owns the conclusion)
+  doesn't change; the assistance behind it can grow.
+
 ---
 
 ## A different kind of "no"
