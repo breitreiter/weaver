@@ -1,38 +1,29 @@
-# weaver — canonical topology (the HEALTHY system)
+# weaver — Thursday demo topology (flash-sale incident)
 #
-# Authored source of truth for the demo's service graph: services (nodes),
-# dependencies (edges), request routes, and per-kind baseline metric
-# distributions the generator samples from. Human-readable and diffable —
-# reviewing a topology change means reviewing this file, never a binary .db.
+# This is the AUTHORED source for the Thursday dataset. Unlike topology.yaml
+# (the flat HEALTHY exemplar, left untouched), this file describes the same
+# e-commerce system PLUS an authored incident (the `incident:` block at the
+# bottom). The generator (--topology this file) emits a baseline that goes
+# sour at onset.
 #
-# This describes a HEALTHY system: everything it generates is nominal, the calm
-# baseline an investigation would compare against. There is NO health/status
-# flag anywhere — health is only ever derived from metrics by a consumer (see
-# data-model.md "a mystery, not an oracle").
-#
-# The Thursday incident dataset lives in data/topology-flashsale.yaml, which is
-# THIS FILE plus an `incident:` block — so the two differ only by the planted
-# mechanism. Generation realism (jittered/dropped scrapes, autocorrelated
-# per-service noise, diverse clustered log templates) is in the generator and
-# applies to both. See project/plans/thursday-dataset-realism.md.
-#
-# Modeled domain: a mid-size e-commerce system, 28 services across 11 subsystems.
+# Realism deltas vs the exemplar (see project/plans/thursday-dataset-realism.md):
+#   * off-round window start + duration (no clean wall-clock boundary)
+#   * un-round counts: 28 services across 11 uneven subsystems
+#   * naming is NOT uniformly <noun>-<suffix>: a codename (kraken), an
+#     abbreviation (inv-cache), a cross-cutting tap (analytics-tap), and a
+#     team seam (promo-api owned by growth, not the checkout team)
+# The incident mechanics, decoys, and the answer key are specced in
+# project/plans/thursday-dataset-contract.md and the gitignored ground-truth.
 
 # ---------------------------------------------------------------------------
-# Window & cadence. Start is off-boundary on purpose (real capture windows
-# don't begin on the hour); the generator further jitters per-sample
-# timestamps and drops the occasional scrape.
+# Window & cadence. Start is off-boundary on purpose; the generator further
+# jitters per-sample timestamps and drops the occasional scrape.
 # ---------------------------------------------------------------------------
 window:
-  start: "2026-06-08T13:52:11Z"
-  minutes: 126
+  start: "2026-06-09T08:13:47Z"
+  minutes: 134
   sample_seconds: 30
 
-# ---------------------------------------------------------------------------
-# Baseline metric profiles by service kind. The generator draws each sample
-# from these (autocorrelated noise + a gentle diurnal wobble) for the baseline.
-# Units: latency ms, error_rate fraction 0..1, throughput rps, saturation 0..1.
-# ---------------------------------------------------------------------------
 kind_baselines:
   gateway:   { latency_p50: 8,   latency_p99: 45,  error_rate: 0.002, throughput_rps: 850, saturation: 0.35 }
   api:       { latency_p50: 18,  latency_p99: 90,  error_rate: 0.004, throughput_rps: 320, saturation: 0.40 }
@@ -44,9 +35,6 @@ kind_baselines:
 
 # ---------------------------------------------------------------------------
 # Services (28). No status column — health is derived, never stored.
-# Naming is intentionally NOT uniformly <noun>-<suffix>: a codename (kraken),
-# an abbreviation (inv-cache), a side-tap (analytics-tap), and a team seam
-# (promo-api owned by growth, not the checkout team).
 # ---------------------------------------------------------------------------
 services:
   # --- edge ---------------------------------------------------------------
@@ -74,14 +62,15 @@ services:
   # --- checkout -----------------------------------------------------------
   - { id: checkout-api,       name: "Checkout API",         kind: api,      subsystem: checkout,     owner_team: checkout }
   - { id: pricing-api,        name: "Pricing API",          kind: api,      subsystem: checkout,     owner_team: checkout }
-  # A promo/discount service owned by GROWTH (marketing), not checkout — an org seam.
+  # A promo/discount service owned by GROWTH (marketing), not checkout — an
+  # org seam. It's the kind of thing a sale hammers; it is NOT the culprit.
   - { id: promo-api,          name: "Promotions API",       kind: api,      subsystem: checkout,     owner_team: growth }
 
   # --- payments -----------------------------------------------------------
   - { id: payments-api,       name: "Payments API",         kind: api,      subsystem: payments,     owner_team: payments }
   - { id: payments-db,        name: "Payments DB",          kind: db,       subsystem: payments,     owner_team: payments,
-      # Money-path DB on a deliberately smaller pool than the default db, as they
-      # often run. A config value — nothing here is "unhealthy".
+      # Money-path DB on a deliberately smaller pool than the default db, as
+      # they often run. A config value — nothing here is "unhealthy".
       metrics: { pool_max: 40, pool_used: 14, throughput_rps: 260, saturation: 0.50 } }
   - { id: payment-gateway,    name: "Payment Gateway (ext)",kind: external, subsystem: payments,     owner_team: payments }
   - { id: fraud-check,        name: "Fraud Check",          kind: api,      subsystem: payments,     owner_team: risk }
@@ -108,8 +97,6 @@ services:
 
 # ---------------------------------------------------------------------------
 # Dependencies (edges). from_service DEPENDS ON to_service. id: "<from>__<to>".
-# Direction is load-bearing: if `to` degrades, `from`'s degradation is
-# explained by it. No status column.
 # ---------------------------------------------------------------------------
 dependencies:
   - { id: web-gateway__storefront-bff, from_service: web-gateway,   to_service: storefront-bff, kind: sync_http, critical: true }
@@ -144,7 +131,7 @@ dependencies:
   - { id: pricing-api__inventory-api, from_service: pricing-api, to_service: inventory-api, kind: sync_http }
   - { id: promo-api__catalog-db,      from_service: promo-api,   to_service: catalog-db,    kind: db_query }
 
-  # payments (payments-db is the deepest money-path dependency)
+  # payments (culprit lives at the bottom here: payments-db)
   - { id: payments-api__payments-db,     from_service: payments-api, to_service: payments-db,     kind: db_query,  critical: true }
   - { id: payments-api__payment-gateway, from_service: payments-api, to_service: payment-gateway, kind: sync_http, critical: true }
   - { id: payments-api__fraud-check,     from_service: payments-api, to_service: fraud-check,     kind: sync_http }
@@ -173,6 +160,65 @@ request_types:
   - { id: recommend,    name: "Get recommendations",weight: 0.08, path: [web-gateway, storefront-bff, recommendations, product-api] }
   - { id: view-cart,    name: "View cart",          weight: 0.12, path: [web-gateway, storefront-bff, cart-api, cart-cache] }
   - { id: login,        name: "Log in",             weight: 0.08, path: [web-gateway, auth-api, user-db] }
+  # The money path: checkout -> payments -> payments-db.
   - { id: checkout,     name: "Checkout / pay",     weight: 0.12, path: [web-gateway, storefront-bff, checkout-api, payments-api, payments-db] }
   - { id: place-order,  name: "Place order",        weight: 0.08, path: [web-gateway, storefront-bff, checkout-api, orders-api, orders-db] }
   - { id: promo-apply,  name: "Apply promo code",   weight: 0.04, path: [web-gateway, storefront-bff, checkout-api, promo-api, catalog-db] }
+
+# ===========================================================================
+# THE INCIDENT (authored). The generator reads this and bends the baseline.
+# Read by --incident mode only; healthy topology.yaml has no such block.
+#
+# Story: a flash sale (external, invisible to telemetry) ~doubles fleet-wide
+# traffic at onset. payments-db's 40-connection pool — fine at 1x — saturates,
+# so checkout fails. A payments-api deploy (v2.4.1) lands ~2 min before onset
+# and looks guilty; it is innocent (copy-only, no DB path change). The data
+# narrows to {demand, regression} and cannot pick: resolution needs two facts
+# only the operator holds (was there a promo? what did v2.4.1 change?).
+# Full answer key: project/private/ground-truth-flash-sale.md
+# ===========================================================================
+incident:
+  name: flash-sale
+  onset_minute: 52          # T0, in minutes from window start (default split is 30% = ~40m, safely in clean baseline)
+
+  # Fleet-wide demand surge — the EXTERNAL trigger telemetry can't explain.
+  # Multiplies throughput on EVERY service (incl. ones that don't depend on
+  # payments — search/browse — which is the tell that it's demand, not a bug).
+  surge:
+    peak: 2.1
+    ramp_min: 6
+
+  # The red herring: a real deploy, coincident with onset, but innocent.
+  deploy:
+    at_minute: 50
+    target: payments-api
+    summary: "Deployed payments-api v2.4.1"
+    fields: { version: "2.4.1", prev: "2.4.0", change: "checkout copy + button styling", touches_db: false, pr: 4821 }
+
+  # Per-service effects, applied at onset+lag_min (ramped over ~3 min, then
+  # sustained to the window end — no recovery; the incident is ongoing).
+  #   role: culprit  -> where it manifests (pool exhaustion)
+  #         cascade  -> downstream collateral on the money path
+  #         collateral -> genuinely-moves decoys NOT on the payments path
+  effects:
+    payments-db:    { lag_min: 3,  role: culprit,    lat_p99_mult: 4.0, err_add: 0.16, sat_to: 0.93, pool_to: 39, pool_wait_ms: 2100 }
+    payments-api:   { lag_min: 6,  role: cascade,    lat_p99_mult: 2.4, err_add: 0.13 }
+    checkout-api:   { lag_min: 8,  role: cascade,    lat_p99_mult: 1.7, err_add: 0.10 }
+    web-gateway:    { lag_min: 11, role: cascade,    lat_p99_mult: 1.3, err_add: 0.05 }
+    recommendations: { lag_min: 4,  role: collateral, lat_p99_mult: 1.6, err_add: 0.0 }
+    search-api:     { lag_min: 5,  role: collateral, lat_p99_mult: 1.5, err_add: 0.0 }
+
+  # recommendations also carries a slow intrinsic drift across the WHOLE window
+  # (incident or not) — the one "always at least one noisy/drifting thing" the
+  # reviewer wanted. It's off the payments path, so it stays a decoy.
+  drifters:
+    - { service: recommendations, metric: latency_p99, drift_pct: 22 }
+
+  # Ambient change events — routine deploys/flags/config across the window, so
+  # "find a deploy near the incident" returns more than one hit (the lone
+  # marker would itself be a tell). None of these are causal.
+  ambient_changes:
+    - { at_minute: 9,   kind: deploy,       target: search-api,           summary: "Deployed search-api v5.7.0" }
+    - { at_minute: 24,  kind: feature_flag, target: recommendations,      summary: "Enabled flag recs_v2_ranking" }
+    - { at_minute: 78,  kind: config,       target: catalog-db,           summary: "Raised catalog-db statement_timeout 2s to 5s" }
+    - { at_minute: 103, kind: deploy,       target: notifications-worker, summary: "Deployed notifications-worker v1.9.3" }
