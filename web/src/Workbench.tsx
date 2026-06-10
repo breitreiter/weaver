@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, type Facets, type SearchResult, type SearchParams } from './api'
+import { Icon } from './Icon'
+
+// data-type marker icon per result type (Material Symbols)
+const TYPE_ICON: Record<string, string> = {
+  service: 'deployed_code',
+  anomaly: 'warning',
+  log: 'description',
+  trace: 'account_tree',
+  metric: 'monitoring',
+  change: 'deployed_code_update',
+}
 
 // The workbench: search is the main event (≥55% of the screen); the board is a
 // secondary evidence anchor. Search is structured (scope + facets + free text)
@@ -143,10 +154,13 @@ function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; on
   return (
     <div className={'card' + (dir ? ` dir-${dir}` : '')}>
       <div className="card-head">
-        <span className={`badge badge-${r.type}`}>{r.type}</span>
+        <span className={`badge badge-${r.type}`} title={r.type}>
+          <Icon name={TYPE_ICON[r.type] ?? 'help'} size={15} /> {r.type}
+        </span>
         <span className="card-title mono">{r.title}</span>
-        <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin} disabled={pinned}>
-          {pinned ? 'pinned' : 'pin'}
+        <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin} disabled={pinned}
+          title={pinned ? 'pinned to the board' : 'pin to the board'}>
+          <Icon name="graph_3" size={18} />
         </button>
       </div>
       <div className="card-sub">{r.subtitle}</div>

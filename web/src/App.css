@@ -48,8 +48,11 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-sub { color: var(--text-dim); font-size: 11px; margin-top: 4px; }
 
-.badge { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600;
-  padding: 2px 7px; border-radius: 4px; flex-shrink: 0; color: #0c1018; }
+.material-symbols-rounded { line-height: 1; vertical-align: middle;
+  font-variation-settings: 'wght' 500, 'GRAD' 0, 'opsz' 24; }
+.badge { display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600;
+  padding: 2px 8px 2px 6px; border-radius: 4px; flex-shrink: 0; color: #0c1018; }
 .badge-service { background: #7aa2f7; }
 .badge-anomaly { background: #e0a35a; }
 .badge-log { background: #9aa5b1; }
@@ -57,10 +60,11 @@
 .badge-metric { background: #73c991; }
 .badge-change { background: #e06c9f; }
 
-.pin { background: var(--panel); border: 1px solid var(--border); color: var(--accent);
-  border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; flex-shrink: 0; }
-.pin:hover { border-color: var(--accent); }
-.pin.done { color: var(--text-dim); cursor: default; }
+.pin { display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  width: 30px; height: 28px; background: var(--panel); border: 1px solid var(--border);
+  color: var(--accent); border-radius: 6px; cursor: pointer; flex-shrink: 0; }
+.pin:hover { border-color: var(--accent); background: var(--panel-2); }
+.pin.done { color: #0c1018; background: var(--accent); border-color: var(--accent); cursor: default; }
 
 /* trace mini span breakdown */
 .trace-mini { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
