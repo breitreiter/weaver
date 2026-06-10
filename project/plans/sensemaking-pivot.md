@@ -109,6 +109,37 @@ evidence attached to nodes.
 > **BoardNode + layered Evidence** per the above — done together with the
 > left-panel v2 and the board render.
 
+### Board interactions
+
+Three gestures, mapping onto the enumerate/discriminate line:
+
+- **Add → auto-tidied in.** Pinning a single-signal finding adds its node and the
+  board **auto-tidies** (a deterministic layout pass — not manual placement; a
+  "tidy" button re-runs it; see `board-build.md`). A pinned *trace* adds its
+  participant nodes + the dependency edges among them — a small factual *slice*,
+  not one node.
+- **Hover → preview candidate linkages — the tool ENUMERATES.** Hovering a node
+  previews the *factual* relationships to other on-board nodes: dependency edges
+  (`/api/graph`), shared route, shared trace. **Never causal suggestions** — the
+  tool shows what's *connected*, never what *caused* what (that would be
+  discriminating; see `analysis-architecture.md` and the no-causal-inference
+  trade-off in `demo-vs-production.md`).
+- **Drag node→node → relationship modal — the operator DISCRIMINATES.** Opens a
+  modal to choose the relationship → a `BoardEdge`. Two visually distinct kinds:
+  - **dependency** — materialize a known fact (neutral, thin, solid).
+  - **causal / temporal / custom** — the operator's hypothesis, the red string
+    (bold, colored, dashed, labeled, directional X→Y). `drawnBy: human` (vs
+    `agent` for agent-drawn).
+
+The backend already stores the edges (kind/label/drawnBy); the node carrying
+layered evidence is the node+evidence refactor.
+
+**Node control rendering** — label placement, edge attach points, line
+decoration — is the piece gated on Joseph's Figma layout *and* the build-vs-adopt
+call (hand-rolled SVG vs **React Flow**, which provides custom nodes, handles =
+attach points, drag-to-place, drag-to-connect → the modal, and styled/animated
+edges natively, without force-directed layout).
+
 ### Persistence — a separate, writable store
 
 The board is **writable user content**, so it can NOT live in the read-only
