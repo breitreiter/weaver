@@ -15,9 +15,18 @@ if (!File.Exists(dbPath))
 
 builder.Services.AddDbContext<WeaverDbContext>(o =>
     o.UseSqlite($"Data Source={dbPath};Mode=ReadOnly"));
+
+// Boards are writable user content — a separate store, NOT the read-only telemetry DB.
+builder.Services.AddDbContext<BoardsDbContext>(o =>
+    o.UseSqlite($"Data Source={WeaverDatabase.LocateBoards()}"));
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+// Create the boards store if it doesn't exist yet.
+using (var scope = app.Services.CreateScope())
+    scope.ServiceProvider.GetRequiredService<BoardsDbContext>().Database.EnsureCreated();
 
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();
@@ -138,6 +147,50 @@ app.MapGet("/api/timeline", (WeaverDbContext db, string? split, double? z, doubl
     return Analysis.Timeline(series, at, z ?? 3.0, minPct ?? 15.0);
 });
 
+// --- boards (writable; co-built by human + agent) ------------------------
+app.MapPost("/api/boards", (BoardsDbContext db, CreateBoardReq req) =>
+{
+    var b = new BoardEntity { Id = NewId(), CreatedAt = NowIso(), Title = string.IsNullOrWhiteSpace(req.Title) ? "untitled" : req.Title! };
+    db.Boards.Add(b);
+    db.SaveChanges();
+    return new CreatedDto(b.Id, $"/view?board={b.Id}");
+});
+
+app.MapGet("/api/boards/{id}", (BoardsDbContext db, string id) =>
+{
+    var b = db.Boards.AsNoTracking().FirstOrDefault(x => x.Id == id);
+    if (b is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
+    var items = db.BoardItems.AsNoTracking().Where(i => i.BoardId == id).OrderBy(i => i.CreatedAt).ToList().Select(ToBoardItemDto).ToList();
+    var edges = db.BoardEdges.AsNoTracking().Where(e => e.BoardId == id).OrderBy(e => e.CreatedAt).ToList().Select(ToBoardEdgeDto).ToList();
+    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, items, edges));
+});
+
+app.MapPost("/api/boards/{id}/items", (BoardsDbContext db, string id, PinReq req) =>
+{
+    if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
+    var item = new BoardItemEntity
+    {
+        Id = NewId(), BoardId = id, Kind = req.Kind, Ref = req.Ref,
+        Evidence = req.Evidence?.GetRawText() ?? "{}", Label = req.Label, X = req.X, Y = req.Y, CreatedAt = NowIso(),
+    };
+    db.BoardItems.Add(item);
+    db.SaveChanges();
+    return Results.Ok(new CreatedDto(item.Id, $"/view?board={id}"));
+});
+
+app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq req) =>
+{
+    if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
+    var edge = new BoardEdgeEntity
+    {
+        Id = NewId(), BoardId = id, FromItem = req.From, ToItem = req.To,
+        Kind = req.Kind ?? "causal", Label = req.Label, DrawnBy = req.DrawnBy ?? "agent", CreatedAt = NowIso(),
+    };
+    db.BoardEdges.Add(edge);
+    db.SaveChanges();
+    return Results.Ok(new CreatedDto(edge.Id, $"/view?board={id}"));
+});
+
 app.Run();
 
 // --- projections (entity -> wire DTO) ------------------------------------
@@ -175,3 +228,10 @@ static (List<Analysis.SeriesInput> series, DateTimeOffset split) LoadSeries(Weav
     }
     return (series, at);
 }
+
+static BoardItemDto ToBoardItemDto(BoardItemEntity i) =>
+    new(i.Id, i.Kind, i.Ref, ParseJson(i.Evidence), i.Label, i.X, i.Y);
+static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
+    new(e.Id, e.FromItem, e.ToItem, e.Kind, e.Label, e.DrawnBy);
+static string NewId() => Guid.NewGuid().ToString("N")[..8];
+static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");

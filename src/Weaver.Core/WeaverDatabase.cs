@@ -26,4 +26,14 @@ public static class WeaverDatabase
         // Not found — return a best-guess so the caller can report it clearly.
         return Path.Combine(Directory.GetCurrentDirectory(), "data", "weaver.db");
     }
+
+    /// <summary>
+    /// Path to the writable boards store, alongside weaver.db. Created if absent.
+    /// </summary>
+    public static string LocateBoards()
+    {
+        var dir = Path.GetDirectoryName(Locate()) ?? Path.Combine(Directory.GetCurrentDirectory(), "data");
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "boards.db");
+    }
 }

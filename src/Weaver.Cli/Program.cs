@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Weaver.Contracts;
 using Weaver.Core;
@@ -25,6 +26,9 @@ try
         case "blast-radius": BlastRadius(); break;
         case "anomalies": Anomalies(); break;
         case "timeline": Timeline(); break;
+        case "board": Board(); break;
+        case "pin": Pin(); break;
+        case "link": Link(); break;
         case "help" or "" or null: Help(); break;
         default: Console.Error.WriteLine($"unknown verb '{verb}'. try: weaver help"); Environment.Exit(2); break;
     }
@@ -53,10 +57,16 @@ void Help()
           timeline  [--split t]         who moved first (onset ordering)
           blast-radius <id>             who depends on a node (tests a guess)
 
+        build the wall (the board — co-built with the human)
+          board new [title]             start a board; prints its id + URL
+          pin --kind K --ref R [...]    pin a finding (--label, --note, --evidence)
+          link <a> <b> --as "explains"  draw a red-string edge between two pins
+          board show [id]               print the board
+
         common flags: --json (raw)  --raw (series points)  --limit N
                       --kind service|edge  --level L  --status S
-                      --split <iso>  --z <n>  --min-pct <n>
-        env: WEAVER_API (default http://localhost:5180)
+                      --split <iso>  --z <n>  --min-pct <n>  --board <id>
+        env: WEAVER_API (default :5180)  WEAVER_WEB (:5173)  WEAVER_BOARD (current board)
         """);
 }
 
@@ -225,6 +235,76 @@ void Timeline()
          $"weaver service {t[0].SubjectId}");
 }
 
+// --- the board (the agent co-builds the wall of red string) ---------------
+void Board()
+{
+    var web = Environment.GetEnvironmentVariable("WEAVER_WEB") ?? "http://localhost:5173";
+    var sub = argv.Pos.Count > 0 ? argv.Pos[0] : "show";
+
+    if (sub == "new")
+    {
+        var title = string.Join(" ", argv.Pos.Skip(1));
+        var c = api.Post<CreatedDto>("/api/boards", new { title = string.IsNullOrWhiteSpace(title) ? null : title });
+        Console.WriteLine($"board {c.Id} created");
+        Console.WriteLine($"open: {web}{c.Url}");
+        Console.WriteLine($"tip:  export WEAVER_BOARD={c.Id}   (so pin/link target it)");
+        return;
+    }
+
+    var id = ResolveBoard(posIndex: 1);
+    var b = api.Get<BoardDto>($"/api/boards/{id}");
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Items.Count} pins, {b.Edges.Count} edges)");
+    Console.WriteLine($"open: {web}/view?board={b.Id}");
+    Console.WriteLine("pins:");
+    foreach (var it in b.Items)
+        Console.WriteLine($"  {it.Id}  {it.Kind,-8} {it.Ref,-18} {it.Label}");
+    if (b.Edges.Count > 0)
+    {
+        Console.WriteLine("red string:");
+        foreach (var e in b.Edges)
+            Console.WriteLine($"  {e.FromItem} -> {e.ToItem}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]");
+    }
+    Hint("weaver pin --kind K --ref R --label \"...\"", "weaver link <a> <b> --as \"explains\"");
+}
+
+void Pin()
+{
+    var id = ResolveBoard();
+    var kind = argv.Opt("kind") ?? "note";
+    var refv = argv.Opt("ref") ?? (argv.Pos.Count > 0 ? argv.Pos[0] : "");
+    object? evidence =
+        argv.Opt("evidence") is { } ev ? JsonSerializer.Deserialize<JsonElement>(ev) :
+        argv.Opt("note") is { } note ? new { note } : null;
+    var c = api.Post<CreatedDto>($"/api/boards/{id}/items",
+        new { kind, @ref = refv, label = argv.Opt("label"), evidence });
+    Console.WriteLine($"pinned {c.Id}  ({kind} {refv})");
+    Hint("weaver link <a> <b> --as \"explains\"", "weaver board show");
+}
+
+void Link()
+{
+    var id = ResolveBoard();
+    var from = argv.Need(0, "from item id");
+    var to = argv.Need(1, "to item id");
+    api.Post<CreatedDto>($"/api/boards/{id}/edges",
+        new { from, to, kind = argv.Opt("kind") ?? "causal", label = argv.Opt("as") ?? argv.Opt("label"), drawnBy = "agent" });
+    Console.WriteLine($"linked {from} -> {to}{(argv.Opt("as") is { } a ? $"  ({a})" : "")}");
+    Hint("weaver board show");
+}
+
+string ResolveBoard(int posIndex = -1)
+{
+    var id = (posIndex >= 0 && argv.Pos.Count > posIndex ? argv.Pos[posIndex] : null)
+             ?? argv.Opt("board") ?? Environment.GetEnvironmentVariable("WEAVER_BOARD");
+    if (string.IsNullOrWhiteSpace(id))
+    {
+        Console.Error.WriteLine("weaver: no board. Run `weaver board new`, pass --board <id>, or set $WEAVER_BOARD.");
+        Environment.Exit(2);
+    }
+    return id!;
+}
+
 // --- shared helpers -------------------------------------------------------
 string AnalysisQuery(string path)
 {
@@ -311,6 +391,19 @@ sealed class Api
         HttpResponseMessage resp;
         try { resp = http.GetAsync(path).GetAwaiter().GetResult(); }
         catch (HttpRequestException) { throw new ApiError($"can't reach the API at {http.BaseAddress}. Is it running? (dotnet run --project src/Weaver.Api)"); }
+
+        LastRaw = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        if (resp.StatusCode == HttpStatusCode.NotFound) throw new ApiError(ErrText(LastRaw) ?? "not found");
+        if (!resp.IsSuccessStatusCode) throw new ApiError($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {LastRaw}");
+        return JsonSerializer.Deserialize<T>(LastRaw, J) ?? throw new ApiError("empty response");
+    }
+
+    public T Post<T>(string path, object body)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(body, J), Encoding.UTF8, "application/json");
+        HttpResponseMessage resp;
+        try { resp = http.PostAsync(path, content).GetAwaiter().GetResult(); }
+        catch (HttpRequestException) { throw new ApiError($"can't reach the API at {http.BaseAddress}. Is it running?"); }
 
         LastRaw = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         if (resp.StatusCode == HttpStatusCode.NotFound) throw new ApiError(ErrText(LastRaw) ?? "not found");
