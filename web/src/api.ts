@@ -24,8 +24,20 @@ export interface LogEvent { id: string; serviceId: string; ts: string; level: st
 export interface Trace { id: string; requestTypeId: string; rootServiceId: string; startedAt: string; durationMs: number; status: string }
 export interface TimelineEntry { subjectId: string; subjectKind: string; metric: string; onsetTs: string; z: number }
 
+// A real, observed relationship between two services — surfaced when you draw a
+// line so you can ground a hypothesis in a fact instead of picking from a flat list.
+export interface Relationship {
+  group: string            // dependency | route | temporal
+  from: string; to: string // the relationship's real direction (may flip the drag)
+  edgeKind: string         // the board edge kind this would draw
+  title: string; detail: string; suggestedLabel: string
+  evidence?: unknown
+}
+export interface Relationships { a: string; b: string; relationships: Relationship[] }
+
 export interface BoardItem { id: string; kind: string; ref: string; evidence?: unknown; label?: string; x?: number; y?: number }
-export interface BoardEdge { id: string; fromItem: string; toItem: string; kind: string; label?: string; drawnBy: string }
+export interface BoardEdge { id: string; fromItem: string; toItem: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean }
+export interface LinkInput { from: string; to: string; kind?: string; label?: string; drawnBy?: string }
 export interface Board { id: string; title: string; createdAt: string; items: BoardItem[]; edges: BoardEdge[] }
 export interface Created { id: string; url: string }
 export interface PinInput { kind: string; ref: string; label?: string; evidence?: unknown }
@@ -65,6 +77,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch('/api' + path, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
+  return res.json() as Promise<T>
+}
+
 const qs = (params: Record<string, string | number | undefined>) => {
   const p = Object.entries(params).filter(([, v]) => v !== undefined && v !== '')
   return p.length ? '?' + p.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&') : ''
@@ -80,6 +98,7 @@ export const api = {
   timeline: (split?: string, z?: number, minPct?: number) =>
     get<TimelineEntry[]>(`/timeline${qs({ split, z, minPct })}`),
   blastRadius: (node: string) => get<BlastRadius>(`/blast-radius/${node}`),
+  relationships: (a: string, b: string) => get<Relationships>(`/relationships${qs({ a, b })}`),
   logs: (p: { serviceId?: string; level?: string; grep?: string; limit?: number }) =>
     get<LogEvent[]>(`/logs${qs({ serviceId: p.serviceId, level: p.level, q: p.grep, limit: p.limit })}`),
   traces: (p: { route?: string; status?: string; minDurationMs?: number; limit?: number }) =>
@@ -88,6 +107,10 @@ export const api = {
   createBoard: (title?: string) => post<Created>('/boards', { title }),
   getBoard: (id: string) => get<Board>(`/boards/${id}`),
   pin: (boardId: string, item: PinInput) => post<Created>(`/boards/${boardId}/items`, item),
+  link: (boardId: string, edge: LinkInput) => post<Created>(`/boards/${boardId}/edges`, edge),
+  crossOut: (boardId: string, edgeId: string, crossedOut: boolean) =>
+    post<BoardEdge>(`/boards/${boardId}/edges/${edgeId}/crossout`, { crossedOut }),
+  deleteEdge: (boardId: string, edgeId: string) => del<{ ok: boolean }>(`/boards/${boardId}/edges/${edgeId}`),
 
   facets: () => get<Facets>('/search/facets'),
   search: (p: SearchParams) => get<SearchResult[]>(`/search${qs({ ...p })}`),

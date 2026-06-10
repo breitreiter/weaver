@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, type Facets, type SearchResult, type SearchParams } from './api'
+import { api, type Facets, type SearchResult, type SearchParams, type Board as BoardData } from './api'
 import { Icon } from './Icon'
+import Board from './Board'
+import Evidence from './Evidence'
+
+// live-sync cadence for the board+evidence panels — slow enough to be cheap,
+// fast enough for the "watch the agent build the wall" moment.
+const BOARD_POLL_MS = 2500
 
 // data-type marker icon per result type (Material Symbols)
 const TYPE_ICON: Record<string, string> = {
@@ -18,6 +24,16 @@ const TYPE_ICON: Record<string, string> = {
 // and returns rich, typed, pinnable result cards over /api/search.
 
 const SCOPES = ['anomalies', 'traces', 'logs', 'services', 'metrics', 'changes']
+
+// results are a capped, sorted page — never a total. When the cap is hit we say
+// so, and name the sort, so "60" never reads as "there happen to be exactly 60".
+// Labels mirror the backend ORDER BY per scope (see /api/search). metrics has no
+// enforced order, so it gets the generic "first N" phrasing.
+const RESULT_LIMIT = 60
+const SORT_BY: Record<string, string> = {
+  anomalies: 'magnitude', traces: 'duration', logs: 'recency',
+  changes: 'time', services: 'name',
+}
 
 // which facet controls each scope shows
 const CONTROLS: Record<string, string[]> = {
@@ -41,13 +57,32 @@ export default function Workbench() {
   const [err, setErr] = useState<string | null>(null)
   const [pinned, setPinned] = useState<Set<string>>(new Set())
   const [pinCount, setPinCount] = useState(0)
+  const focus = params.get('focus')
+
+  // the board is fetched + polled once here, shared by the board and evidence
+  // panels so they read one always-in-sync copy.
+  const [board, setBoard] = useState<BoardData | null>(null)
+  const reloadBoard = useCallback(async () => {
+    if (!boardId) { setBoard(null); return }
+    try { setBoard(await api.getBoard(boardId)) } catch { /* keep last good copy */ }
+  }, [boardId])
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- polls an external system; setState lands async after the fetch
+  useEffect(() => {
+    reloadBoard()
+    const t = setInterval(reloadBoard, BOARD_POLL_MS)
+    return () => clearInterval(t)
+  }, [reloadBoard, pinCount])
+
+  const setFocus = (svc: string) => {
+    const next = new URLSearchParams(params); next.set('focus', svc); setParams(next)
+  }
 
   useEffect(() => { api.facets().then(setFacets).catch(e => setErr(String(e))) }, [])
 
   async function run() {
     setErr(null); setRunning(true)
     try {
-      const p: SearchParams = { scope, limit: 60 }
+      const p: SearchParams = { scope, limit: RESULT_LIMIT }
       if (q.trim()) p.q = q.trim()
       for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric'])
         if (f[k]) (p as Record<string, unknown>)[k] = f[k]
@@ -134,17 +169,27 @@ export default function Workbench() {
           {running && <div className="hint">searching…</div>}
           {err && <div className="error">{err}</div>}
           {!running && !err && results.length === 0 && <div className="hint">No results. Try a different scope or loosen the facets.</div>}
-          {!running && !err && results.length > 0 && <div className="result-count">{results.length} result{results.length > 1 ? 's' : ''}</div>}
+          {!running && !err && results.length > 0 && (
+            results.length >= RESULT_LIMIT
+              ? <div className="result-count capped">
+                  top {RESULT_LIMIT}{SORT_BY[scope] ? ` by ${SORT_BY[scope]}` : ''} — more exist
+                </div>
+              : <div className="result-count">{results.length} result{results.length > 1 ? 's' : ''}</div>
+          )}
           {results.map(r => <ResultCard key={r.id} r={r} pinned={pinned.has(r.id)} onPin={() => pin(r)} />)}
         </div>
       </div>
 
       <div className="board-pane">
-        <div className="board-empty">
-          <div className="board-empty-title">the board</div>
-          <div>pinned findings hang here — the wall of red string.<br />(render coming next)</div>
-        </div>
+        {boardId
+          ? <Board boardId={boardId} board={board} reload={reloadBoard} focus={focus} onFocus={setFocus} />
+          : <div className="board-empty">
+              <div className="board-empty-title">the board</div>
+              <div>pinned findings hang here — the wall of red string.<br />pin something on the left to start one.</div>
+            </div>}
       </div>
+
+      <Evidence board={board} focus={focus} onFocus={setFocus} />
     </div>
   )
 }

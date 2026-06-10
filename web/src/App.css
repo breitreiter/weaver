@@ -1,12 +1,16 @@
 .loading, .error { padding: 24px; color: var(--text-dim); }
 .error { color: var(--up); padding: 10px 16px; }
 
-/* --- workbench: search (dominant) + board (secondary anchor) ---------- */
+/* --- workbench: search (forage) | board (structure) | evidence (narrative) ---
+   three panes. search stays the widest; flex weights are easy to tune live. */
 .workbench { display: flex; height: 100vh; }
-.search-pane { flex: 1.4; min-width: 0; display: flex; flex-direction: column;
+.search-pane { flex: 1.5; min-width: 0; display: flex; flex-direction: column;
   border-right: 1px solid var(--border); background: var(--panel); }
-.board-pane { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
+.board-pane { flex: 1.1; min-width: 0; position: relative; display: flex;
+  align-items: center; justify-content: center;
   background: radial-gradient(circle at 1px 1px, #20242e 1px, transparent 0) 0 0 / 24px 24px; }
+.evidence-pane { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 14px 24px;
+  border-left: 1px solid var(--border); background: var(--panel); }
 
 .search-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px;
   border-bottom: 1px solid var(--border); }
@@ -37,6 +41,7 @@
 /* results */
 .results { flex: 1; overflow-y: auto; padding: 12px 16px 20px; }
 .result-count { color: var(--text-dim); font-size: 12px; margin-bottom: 8px; }
+.result-count.capped { color: var(--warn, #c9a227); font-style: italic; }
 .hint { color: var(--text-dim); font-size: 13px; padding: 8px 2px; }
 
 .card { background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--border);
@@ -75,3 +80,131 @@
 
 .board-empty { text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
 .board-empty-title { color: var(--text); font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+
+/* --- the board: React Flow canvas ------------------------------------- */
+.board-flow { position: relative; width: 100%; height: 100%; }
+.board-msg { display: flex; align-items: center; justify-content: center; }
+.board-overlay { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px; pointer-events: none;
+  text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+
+/* React Flow chrome → match the dark theme */
+.react-flow__controls { box-shadow: none; }
+.react-flow__controls-button { background: var(--panel-2); border-bottom: 1px solid var(--border);
+  color: var(--text); }
+.react-flow__controls-button:hover { background: var(--panel); }
+.react-flow__controls-button svg { fill: var(--text); }
+.react-flow__attribution { display: none; }
+
+/* basic node — a service with its evidence chips. (visual is placeholder; the
+   designed node control swaps in later — board-build.md phase 7) */
+.bnode { min-width: 150px; max-width: 200px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.bnode-head { display: flex; align-items: center; gap: 6px; }
+.bnode-ico { color: #7aa2f7; }
+.bnode-title { color: var(--text-h); font-size: 12px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.bnode-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.bchip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px;
+  border-radius: 4px; color: #0c1018; font-size: 10px; font-weight: 600; }
+.bchip-n { font-size: 10px; }
+.bchip-anomaly { background: #e0a35a; }
+.bchip-log { background: #9aa5b1; }
+.bchip-trace { background: #9d7cd8; }
+.bchip-metric { background: #73c991; }
+.bchip-change { background: #e06c9f; }
+
+.react-flow__node.selected .bnode { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.react-flow__handle { width: 7px; height: 7px; background: var(--accent); border: none; }
+.react-flow__edge { cursor: pointer; }
+.react-flow__edge.edge-string .react-flow__edge-path { stroke-dasharray: 6 3; }
+.react-flow__edge-text { fill: var(--text); font-size: 10px; }
+.react-flow__edge-textbg { fill: var(--panel); }
+/* a cut red string — kept, struck through (the reasoning trail stays reviewable) */
+.react-flow__edge.edge-cut .react-flow__edge-text { fill: var(--text-dim); text-decoration: line-through; }
+
+/* edge toolbar — appears when a red string is selected (cross out / remove) */
+.edge-toolbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; z-index: 5;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.edge-toolbar-label { font-size: 11px; color: var(--text-dim); padding: 0 6px;
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etb-btn { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
+  border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 9px;
+  font-size: 12px; cursor: pointer; }
+.etb-btn:hover { border-color: var(--accent); }
+.etb-danger:hover { border-color: var(--up); color: var(--up); }
+
+/* relationship modal — drag node→node to draw a line */
+.modal-scrim { position: absolute; inset: 0; z-index: 10; display: flex;
+  align-items: center; justify-content: center; background: rgba(10,12,16,.55); }
+.modal { width: 340px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+.modal-title { color: var(--text-h); font-size: 15px; font-weight: 600; }
+.modal-sub { color: var(--text-dim); font-size: 12px; margin: 4px 0 12px; }
+.modal-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.mk { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+.mk:hover { color: var(--text); }
+.mk.active { color: var(--text-h); border-color: var(--accent); }
+.mk-red.active { border-color: var(--up); color: var(--up); }
+.modal-input { width: 100%; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-h); padding: 9px 12px; font-size: 13px; margin-bottom: 12px; }
+.modal-input:focus { outline: none; border-color: var(--accent); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal-primary { border-color: var(--accent); color: var(--text-h); }
+.modal-primary:hover { background: var(--panel-2); }
+.run:disabled { opacity: .45; cursor: default; }
+.run:disabled:hover { border-color: var(--border); background: var(--panel-2); }
+
+/* relationship modal — the real relationships the data holds between two nodes */
+.modal-rel { width: 420px; }
+.rel-section { color: var(--text-dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .4px; margin: 14px 0 8px; }
+.rel-section:first-of-type { margin-top: 4px; }
+.rel-empty { color: var(--text-dim); font-size: 12px; padding: 2px 0 4px; }
+.rel-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+.rel-row { display: flex; flex-direction: column; gap: 3px; text-align: left;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; cursor: pointer; color: var(--text); }
+.rel-row:hover { border-color: var(--accent); }
+.rel-row.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.rel-row-top { display: flex; align-items: center; gap: 8px; }
+.rel-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px;
+  padding: 1px 6px; border-radius: 4px; color: #0c1018; }
+.rel-badge-dependency { background: #9aa5b1; }
+.rel-badge-route { background: #73c991; }
+.rel-badge-temporal { background: var(--up); }
+.rel-dir { font-size: 11px; color: var(--text-dim); }
+.rel-title { font-size: 12px; color: var(--text-h); margin-left: auto; }
+.rel-detail { font-size: 11px; color: var(--text-dim); }
+
+/* --- evidence panel: the narrative summary of the whole board --------- */
+.evidence-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.evidence-title { color: var(--text-h); font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+.evidence-sub { color: var(--text-dim); font-size: 11px; }
+
+.ev-node { border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+  margin-bottom: 10px; background: var(--panel-2); cursor: pointer; scroll-margin-top: 8px; }
+.ev-node.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ev-node-head { display: flex; align-items: center; gap: 6px; }
+.ev-node-title { color: var(--text-h); font-size: 13px; }
+.ev-node-label { color: var(--text-dim); font-size: 11px; font-style: italic; }
+
+.ev-item { display: flex; gap: 8px; margin-top: 8px; }
+.ev-item .badge { align-self: flex-start; }
+.ev-item-body { min-width: 0; flex: 1; }
+.ev-item-label { color: var(--text); font-size: 12px; }
+.ev-item-sub { color: var(--text-dim); font-size: 11px; margin-top: 2px;
+  overflow-wrap: anywhere; }
+
+.ev-strings { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border);
+  display: flex; flex-direction: column; gap: 4px; }
+.ev-string { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--up); }
+.ev-string-kind { color: var(--text-dim); }
+.ev-string.cut { color: var(--text-dim); }
+.ev-string.cut .mono, .ev-string.cut .ev-string-kind { text-decoration: line-through; }
+.ev-string-cut { color: var(--up); font-weight: 600; text-decoration: none; font-size: 10px;
+  text-transform: uppercase; letter-spacing: .05em; }
