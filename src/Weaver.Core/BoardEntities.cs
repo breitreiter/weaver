@@ -34,5 +34,6 @@ public class BoardEdgeEntity
     public string Kind { get; set; } = "causal";  // dependency (tool fact) | causal | temporal | custom (the red string)
     public string? Label { get; set; }
     public string DrawnBy { get; set; } = "agent"; // human | agent
+    public bool CrossedOut { get; set; }           // the operator cut this thread (kept, struck through)
     public string CreatedAt { get; set; } = "";
 }

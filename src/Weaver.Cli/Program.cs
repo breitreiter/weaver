@@ -30,6 +30,7 @@ try
         case "board": Board(); break;
         case "pin": Pin(); break;
         case "link": Link(); break;
+        case "crossout": CrossOut(); break;
         case "help" or "" or null: Help(); break;
         default: Console.Error.WriteLine($"unknown verb '{verb}'. try: weaver help"); Environment.Exit(2); break;
     }
@@ -63,6 +64,7 @@ void Help()
           board new [title]             start a board; prints its id + URL
           pin --kind K --ref R [...]    pin a finding (--label, --note, --evidence)
           link <a> <b> --as "explains"  draw a red-string edge between two pins
+          crossout <edge> [--restore]   cut a red string (kept, struck through)
           board show [id]               print the board
 
         common flags: --json (raw)  --raw (series points)  --limit N
@@ -210,7 +212,11 @@ void Changes()
     Console.WriteLine($"{rows.Count} change event(s):");
     Console.WriteLine($"  {"when",-10} {"kind",-12} {"target",-16} summary");
     foreach (var c in rows)
+    {
         Console.WriteLine($"  {Clock(c.Ts),-10} {c.Kind,-12} {c.TargetId ?? "(fleet)",-16} {c.Summary}");
+        if (c.Fields.ValueKind == JsonValueKind.Object && c.Fields.EnumerateObject().Any())
+            Console.WriteLine($"  {"",-10} {"",-12} {"",-16} {string.Join("  ", c.Fields.EnumerateObject().Select(p => $"{p.Name}={p.Value}"))}");
+    }
     Hint("weaver pin --kind change --ref <service> --label \"...\"   (pin a deploy as evidence)");
 }
 
@@ -315,6 +321,16 @@ void Link()
     Hint("weaver board show");
 }
 
+void CrossOut()
+{
+    var id = ResolveBoard();
+    var edge = argv.Need(0, "edge id");
+    var restore = argv.Has("restore");
+    api.Post<BoardEdgeDto>($"/api/boards/{id}/edges/{edge}/crossout", new { crossedOut = !restore });
+    Console.WriteLine(restore ? $"restored {edge}" : $"crossed out {edge}");
+    Hint("weaver board show");
+}
+
 string ResolveBoard(int posIndex = -1)
 {
     var id = (posIndex >= 0 && argv.Pos.Count > posIndex ? argv.Pos[posIndex] : null)
@@ -385,6 +401,7 @@ sealed class ArgParser
 
     public bool Json => flags.Contains("json");
     public bool Raw => flags.Contains("raw");
+    public bool Has(string k) => flags.Contains(k);
     public int? Limit => opts.TryGetValue("limit", out var v) && int.TryParse(v, out var n) ? n : null;
     public string? Opt(string k) => opts.TryGetValue(k, out var v) ? v : null;
     public string Opt(string k, string dflt) => opts.TryGetValue(k, out var v) ? v : dflt;

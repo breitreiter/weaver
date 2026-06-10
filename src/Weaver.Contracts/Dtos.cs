@@ -87,7 +87,7 @@ public record TimelineEntryDto(string SubjectId, string SubjectKind, string Metr
 // --- the board (sensemaking; co-built by human + agent) ------------------
 
 public record BoardItemDto(string Id, string Kind, string Ref, JsonElement? Evidence, string? Label, double? X, double? Y);
-public record BoardEdgeDto(string Id, string FromItem, string ToItem, string Kind, string? Label, string DrawnBy);
+public record BoardEdgeDto(string Id, string FromItem, string ToItem, string Kind, string? Label, string DrawnBy, bool CrossedOut);
 public record BoardDto(string Id, string Title, string CreatedAt,
     IReadOnlyList<BoardItemDto> Items, IReadOnlyList<BoardEdgeDto> Edges);
 
@@ -95,6 +95,7 @@ public record BoardDto(string Id, string Title, string CreatedAt,
 public record CreateBoardReq(string? Title);
 public record PinReq(string Kind, string Ref, JsonElement? Evidence, string? Label, double? X, double? Y);
 public record LinkReq(string From, string To, string? Kind, string? Label, string? DrawnBy);
+public record CrossOutReq(bool CrossedOut);
 public record CreatedDto(string Id, string Url);
 
 // --- change events (deploys/config/flags — telemetry, per the dataset contract)

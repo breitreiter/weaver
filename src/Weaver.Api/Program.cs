@@ -191,6 +191,27 @@ app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq re
     return Results.Ok(new CreatedDto(edge.Id, $"/view?board={id}"));
 });
 
+// Cross out (or restore) the red string — the demo's payoff: the operator cuts a
+// thread after an out-of-band exoneration. The edge is kept (struck through), not
+// deleted, so the reasoning trail stays reviewable.
+app.MapPost("/api/boards/{id}/edges/{edgeId}/crossout", (BoardsDbContext db, string id, string edgeId, CrossOutReq req) =>
+{
+    var edge = db.BoardEdges.FirstOrDefault(e => e.BoardId == id && e.Id == edgeId);
+    if (edge is null) return Results.NotFound(new { error = $"unknown edge '{edgeId}'" });
+    edge.CrossedOut = req.CrossedOut;
+    db.SaveChanges();
+    return Results.Ok(ToBoardEdgeDto(edge));
+});
+
+app.MapDelete("/api/boards/{id}/edges/{edgeId}", (BoardsDbContext db, string id, string edgeId) =>
+{
+    var edge = db.BoardEdges.FirstOrDefault(e => e.BoardId == id && e.Id == edgeId);
+    if (edge is null) return Results.NotFound(new { error = $"unknown edge '{edgeId}'" });
+    db.BoardEdges.Remove(edge);
+    db.SaveChanges();
+    return Results.Ok(new { ok = true });
+});
+
 // --- change events (deploys/config/flags); tolerant if not generated yet --
 app.MapGet("/api/change-events", (WeaverDbContext db, string? from, string? to, string? target) =>
     ChangeEvents(db, from, to, target));
@@ -393,7 +414,7 @@ static (List<Analysis.SeriesInput> series, DateTimeOffset split) LoadSeries(Weav
 static BoardItemDto ToBoardItemDto(BoardItemEntity i) =>
     new(i.Id, i.Kind, i.Ref, ParseJson(i.Evidence), i.Label, i.X, i.Y);
 static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
-    new(e.Id, e.FromItem, e.ToItem, e.Kind, e.Label, e.DrawnBy);
+    new(e.Id, e.FromItem, e.ToItem, e.Kind, e.Label, e.DrawnBy, e.CrossedOut);
 static string NewId() => Guid.NewGuid().ToString("N")[..8];
 static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 
