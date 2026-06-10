@@ -60,6 +60,19 @@ public class TraceEntity
     public string Status { get; set; } = "";
 }
 
+// Deploys / config changes / feature flags (per the dataset contract). May not
+// exist in the DB yet — the generator adds it on regeneration; queries are
+// guarded so the API works before then.
+public class ChangeEventEntity
+{
+    public string Id { get; set; } = "";
+    public string Ts { get; set; } = "";
+    public string Kind { get; set; } = "";        // deploy | config | migration | feature_flag
+    public string? TargetId { get; set; }          // service it touched (null = fleet-wide)
+    public string Summary { get; set; } = "";
+    public string Fields { get; set; } = "{}";     // json
+}
+
 public class SpanEntity
 {
     public string Id { get; set; } = "";

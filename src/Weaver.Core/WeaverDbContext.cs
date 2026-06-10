@@ -14,6 +14,7 @@ public sealed class WeaverDbContext : DbContext
     public DbSet<LogEventEntity> Logs => Set<LogEventEntity>();
     public DbSet<TraceEntity> Traces => Set<TraceEntity>();
     public DbSet<SpanEntity> Spans => Set<SpanEntity>();
+    public DbSet<ChangeEventEntity> ChangeEvents => Set<ChangeEventEntity>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -100,6 +101,18 @@ public sealed class WeaverDbContext : DbContext
             e.Property(x => x.SelfMs).HasColumnName("self_ms");
             e.Property(x => x.Status).HasColumnName("status");
             e.Property(x => x.Attributes).HasColumnName("attributes");
+        });
+
+        b.Entity<ChangeEventEntity>(e =>
+        {
+            e.ToTable("change_events");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.Ts).HasColumnName("ts");
+            e.Property(x => x.Kind).HasColumnName("kind");
+            e.Property(x => x.TargetId).HasColumnName("target_id");
+            e.Property(x => x.Summary).HasColumnName("summary");
+            e.Property(x => x.Fields).HasColumnName("fields");
         });
     }
 }

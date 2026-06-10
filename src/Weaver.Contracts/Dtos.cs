@@ -97,4 +97,41 @@ public record PinReq(string Kind, string Ref, JsonElement? Evidence, string? Lab
 public record LinkReq(string From, string To, string? Kind, string? Label, string? DrawnBy);
 public record CreatedDto(string Id, string Url);
 
+// --- change events (deploys/config/flags — telemetry, per the dataset contract)
+public record ChangeEventDto(string Id, string Ts, string Kind, string? TargetId, string Summary, JsonElement Fields);
+
+// --- search API (the left-panel query layer; see search-api.md) ----------
+
+public record WindowDto(string Start, string End);
+
+public record FacetsDto(
+    WindowDto Window,
+    IReadOnlyList<string> Subsystems,
+    IReadOnlyList<string> Kinds,
+    IReadOnlyList<string> Teams,
+    IReadOnlyList<string> Metrics,
+    IReadOnlyList<string> LogLevels,
+    IReadOnlyList<string> LogTemplates,
+    IReadOnlyList<string> Routes,
+    IReadOnlyList<string> TraceStatuses,
+    IReadOnlyList<string> ChangeKinds);
+
+// What to pin: the node(s) + (optionally) the evidence to layer onto them.
+public record EvidenceRefDto(string Kind, string Aspect, string? At, object? Payload);
+public record PinTargetDto(IReadOnlyList<string> NodeIds, EvidenceRefDto? Evidence);
+
+// A single typed, self-describing, pre-resolved-for-pinning search result.
+public record SearchResultDto(string Type, string Id, string Title, string Subtitle, object? Payload, PinTargetDto Pin);
+
+// node-evidence dossier
+public record NodeSignalDto(string Metric, string ShapeCode, string Prose);
+public record NodeLogGroupDto(string TemplateId, string Level, int Count, string Sample);
+public record NodeEvidenceDto(
+    ServiceDto Node,
+    WindowDto Window,
+    IReadOnlyList<NodeSignalDto> Signals,
+    IReadOnlyList<NodeLogGroupDto> Logs,
+    IReadOnlyList<ChangeEventDto> Changes,
+    int TracesParticipated);
+
 

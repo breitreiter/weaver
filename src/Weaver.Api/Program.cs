@@ -191,6 +191,167 @@ app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq re
     return Results.Ok(new CreatedDto(edge.Id, $"/view?board={id}"));
 });
 
+// --- change events (deploys/config/flags); tolerant if not generated yet --
+app.MapGet("/api/change-events", (WeaverDbContext db, string? from, string? to, string? target) =>
+    ChangeEvents(db, from, to, target));
+
+// --- search: facets --------------------------------------------------------
+app.MapGet("/api/search/facets", (WeaverDbContext db) => new FacetsDto(
+    new WindowDto(db.MetricSamples.Min(m => m.Ts)!, db.MetricSamples.Max(m => m.Ts)!),
+    db.Services.Where(s => s.Subsystem != null).Select(s => s.Subsystem!).Distinct().OrderBy(x => x).ToList(),
+    db.Services.Select(s => s.Kind).Distinct().OrderBy(x => x).ToList(),
+    db.Services.Where(s => s.OwnerTeam != null).Select(s => s.OwnerTeam!).Distinct().OrderBy(x => x).ToList(),
+    db.MetricSamples.Select(m => m.Metric).Distinct().OrderBy(x => x).ToList(),
+    db.Logs.Select(l => l.Level).Distinct().OrderBy(x => x).ToList(),
+    db.Logs.Select(l => l.TemplateId).Distinct().OrderBy(x => x).ToList(),
+    db.RequestTypes.Select(r => r.Id).OrderBy(x => x).ToList(),
+    db.Traces.Select(t => t.Status).Distinct().OrderBy(x => x).ToList(),
+    ChangeKinds(db)));
+
+// --- search: structured query -> typed results -----------------------------
+app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
+    string? subsystem, string? kind, string? team,
+    string? level, string? template, string? route, string? status, int? minMs,
+    string? metric, string? from, string? to, string? split, double? z, double? minPct, int? limit) =>
+{
+    var lim = limit ?? 50;
+    scope ??= "services";
+
+    HashSet<string>? svc = null;
+    if (subsystem is not null || kind is not null || team is not null)
+    {
+        var sq0 = db.Services.AsQueryable();
+        if (subsystem is not null) sq0 = sq0.Where(s => s.Subsystem == subsystem);
+        if (kind is not null) sq0 = sq0.Where(s => s.Kind == kind);
+        if (team is not null) sq0 = sq0.Where(s => s.OwnerTeam == team);
+        svc = sq0.Select(s => s.Id).ToHashSet();
+    }
+    bool pass(string sid) => svc is null || svc.Contains(sid);
+
+    switch (scope)
+    {
+        case "services":
+        {
+            var sq = db.Services.AsQueryable();
+            if (subsystem is not null) sq = sq.Where(s => s.Subsystem == subsystem);
+            if (kind is not null) sq = sq.Where(s => s.Kind == kind);
+            if (team is not null) sq = sq.Where(s => s.OwnerTeam == team);
+            if (!string.IsNullOrWhiteSpace(q)) sq = sq.Where(s => s.Id.Contains(q!) || s.Name.Contains(q!));
+            var rows = sq.OrderBy(s => s.Id).Take(lim).ToList();
+            return Results.Ok(rows.Select(s => new SearchResultDto(
+                "service", "svc:" + s.Id, s.Id, $"{s.Kind} · {s.Subsystem ?? "-"}",
+                new { s.Kind, s.Subsystem, s.OwnerTeam }, new PinTargetDto([s.Id], null))).ToList());
+        }
+        case "anomalies":
+        {
+            var (series, at) = LoadSeries(db, split);
+            var rows = Analysis.Anomalies(series, at, z ?? 3.0, minPct ?? 15.0)
+                .Where(a => a.SubjectKind != "service" || pass(a.SubjectId)).Take(lim).ToList();
+            return Results.Ok(rows.Select(a => new SearchResultDto(
+                "anomaly", $"an:{a.SubjectId}:{a.Metric}",
+                $"{a.SubjectId}  {a.Metric}  {(a.DeltaPct > 0 ? "+" : "")}{a.DeltaPct}%",
+                $"z {a.Z} · {a.Direction} · onset {a.OnsetTs}", a,
+                new PinTargetDto([a.SubjectId], new EvidenceRefDto("anomaly", a.Metric, a.OnsetTs, a)))).ToList());
+        }
+        case "logs":
+        {
+            IQueryable<LogEventEntity> lq = string.IsNullOrWhiteSpace(q)
+                ? db.Logs
+                : db.Logs.FromSqlInterpolated($@"
+                    SELECT le.* FROM log_events le
+                    JOIN log_events_fts f ON le.rowid = f.rowid
+                    WHERE log_events_fts MATCH {q}");
+            if (level is not null) lq = lq.Where(l => l.Level == level);
+            if (template is not null) lq = lq.Where(l => l.TemplateId == template);
+            if (from is not null) lq = lq.Where(l => string.Compare(l.Ts, from) >= 0);
+            if (to is not null) lq = lq.Where(l => string.Compare(l.Ts, to) <= 0);
+            var rows = lq.OrderByDescending(l => l.Ts).Take(lim).ToList().Where(l => pass(l.ServiceId));
+            return Results.Ok(rows.Select(l => new SearchResultDto(
+                "log", "log:" + l.Id, l.Message, $"{l.Level} · {l.ServiceId} · {l.Ts}", ToLogDto(l),
+                new PinTargetDto([l.ServiceId], new EvidenceRefDto("log", l.TemplateId, l.Ts, ToLogDto(l))))).ToList());
+        }
+        case "traces":
+        {
+            var tq = db.Traces.AsQueryable();
+            if (route is not null) tq = tq.Where(t => t.RequestTypeId == route);
+            if (status is not null) tq = tq.Where(t => t.Status == status);
+            if (minMs is not null) tq = tq.Where(t => t.DurationMs >= minMs);
+            var rows = tq.OrderByDescending(t => t.DurationMs).Take(lim).ToList();
+            return Results.Ok(rows.Select(t =>
+            {
+                var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
+                var hot = spans.FirstOrDefault();
+                var nodeIds = spans.Select(s => s.ServiceId).Distinct().ToList();
+                return new SearchResultDto(
+                    "trace", "tr:" + t.Id, $"{t.RequestTypeId}  {t.DurationMs}ms  {t.Status}",
+                    hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
+                    new { trace = ToTraceDto(t), spans = spans.Select(ToSpanDto) },
+                    new PinTargetDto(nodeIds, new EvidenceRefDto("trace", "route:" + t.RequestTypeId, t.StartedAt,
+                        new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null })));
+            }).ToList());
+        }
+        case "metrics":
+        {
+            var m = metric ?? "latency_p99";
+            var (series, _) = LoadSeries(db, split);
+            var rows = series.Where(s => s.Kind == "service" && s.Metric == m && pass(s.Id)).Take(lim).ToList();
+            return Results.Ok(rows.Select(s =>
+            {
+                var tr = Trajectory.Encode(s.Points.Select(p => p.Val).ToList(), MinutesOf(s.Points), UnitFor(m));
+                return new SearchResultDto(
+                    "metric", $"me:{s.Id}:{m}", $"{s.Id}  {m}", tr.ShapeCode,
+                    new { tr.ShapeCode, tr.Prose, tr.Min, tr.Max, tr.Mean },
+                    new PinTargetDto([s.Id], new EvidenceRefDto("metric", m, null, new { tr.ShapeCode, tr.Prose })));
+            }).ToList());
+        }
+        case "changes":
+        {
+            var rows = ChangeEvents(db, from, to, null)
+                .Where(c => c.TargetId is null || pass(c.TargetId)).Take(lim).ToList();
+            return Results.Ok(rows.Select(c => new SearchResultDto(
+                "change", "ce:" + c.Id, c.Summary,
+                $"{c.Kind} · {c.Ts}" + (c.TargetId is not null ? " · " + c.TargetId : " · fleet-wide"), c,
+                new PinTargetDto(c.TargetId is not null ? [c.TargetId] : [],
+                    new EvidenceRefDto("change", c.Kind, c.Ts, c)))).ToList());
+        }
+        default:
+            return Results.BadRequest(new { error = $"unknown scope '{scope}' (services|anomalies|logs|traces|metrics|changes)" });
+    }
+});
+
+// --- node evidence dossier (powers the evidence panel + the pin menu) ------
+app.MapGet("/api/nodes/{id}/evidence", (WeaverDbContext db, string id, string? from, string? to) =>
+{
+    var s = db.Services.FirstOrDefault(x => x.Id == id);
+    if (s is null) return Results.NotFound(new { error = $"unknown service '{id}'" });
+    var f = from ?? db.MetricSamples.Min(m => m.Ts)!;
+    var t = to ?? db.MetricSamples.Max(m => m.Ts)!;
+
+    var samples = db.MetricSamples
+        .Where(m => m.SubjectKind == "service" && m.SubjectId == id
+            && string.Compare(m.Ts, f) >= 0 && string.Compare(m.Ts, t) <= 0)
+        .OrderBy(m => m.Ts).ToList();
+    var signals = samples.GroupBy(m => m.Metric).Where(g => g.Key != "pool_max")
+        .Select(g =>
+        {
+            var pts = g.Select(x => (DateTimeOffset.Parse(x.Ts), x.Value)).ToList();
+            var tr = Trajectory.Encode(g.Select(x => x.Value).ToList(), MinutesOf(pts), UnitFor(g.Key));
+            return new NodeSignalDto(g.Key, tr.ShapeCode, tr.Prose);
+        }).OrderBy(x => x.Metric).ToList();
+
+    var logGroups = db.Logs
+        .Where(l => l.ServiceId == id && string.Compare(l.Ts, f) >= 0 && string.Compare(l.Ts, t) <= 0)
+        .ToList()
+        .GroupBy(l => (l.Level, l.TemplateId))
+        .Select(g => new NodeLogGroupDto(g.Key.TemplateId, g.Key.Level, g.Count(), g.First().Message))
+        .OrderByDescending(x => x.Count).ToList();
+
+    var changes = ChangeEvents(db, f, t, id);
+    var traceCount = db.Spans.Where(sp => sp.ServiceId == id).Select(sp => sp.TraceId).Distinct().Count();
+
+    return Results.Ok(new NodeEvidenceDto(ToServiceDto(s), new WindowDto(f, t), signals, logGroups, changes, traceCount));
+});
+
 app.Run();
 
 // --- projections (entity -> wire DTO) ------------------------------------
@@ -235,3 +396,33 @@ static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
     new(e.Id, e.FromItem, e.ToItem, e.Kind, e.Label, e.DrawnBy);
 static string NewId() => Guid.NewGuid().ToString("N")[..8];
 static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+
+static ChangeEventDto ToChangeDto(ChangeEventEntity c) =>
+    new(c.Id, c.Ts, c.Kind, c.TargetId, c.Summary, ParseJson(c.Fields));
+
+// change_events may not be in the DB yet (the generator adds it later) — guard so
+// the API works against the current healthy baseline.
+static List<ChangeEventDto> ChangeEvents(WeaverDbContext db, string? from, string? to, string? target)
+{
+    try
+    {
+        var q = db.ChangeEvents.AsQueryable();
+        if (from is not null) q = q.Where(c => string.Compare(c.Ts, from) >= 0);
+        if (to is not null) q = q.Where(c => string.Compare(c.Ts, to) <= 0);
+        if (target is not null) q = q.Where(c => c.TargetId == target);
+        return q.OrderBy(c => c.Ts).ToList().Select(ToChangeDto).ToList();
+    }
+    catch (Microsoft.Data.Sqlite.SqliteException) { return []; }
+}
+
+static List<string> ChangeKinds(WeaverDbContext db)
+{
+    try { return db.ChangeEvents.Select(c => c.Kind).Distinct().OrderBy(x => x).ToList(); }
+    catch (Microsoft.Data.Sqlite.SqliteException) { return []; }
+}
+
+static string UnitFor(string metric) =>
+    metric is "latency_p50" or "latency_p99" ? "ms" : metric == "throughput_rps" ? " rps" : "";
+
+static double MinutesOf(IReadOnlyList<(DateTimeOffset Ts, double Val)> pts) =>
+    pts.Count > 1 ? (pts[^1].Ts - pts[0].Ts).TotalMinutes : 120;
