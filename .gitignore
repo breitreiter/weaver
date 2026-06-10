@@ -1,5 +1,6 @@
 # --- weaver private / local-only (never commit) ---
 project/private/
+demo/
 *.local.md
 *.local.json
 
@@ -7,6 +8,8 @@ project/private/
 # Source of truth is data/*.yaml + the generator; the .db is a build artifact.
 data/*.db
 data/*.db-journal
+data/*.db-shm
+data/*.db-wal
 
 # --- .NET ---
 bin/
