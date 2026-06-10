@@ -30,6 +30,25 @@ export interface Board { id: string; title: string; createdAt: string; items: Bo
 export interface Created { id: string; url: string }
 export interface PinInput { kind: string; ref: string; label?: string; evidence?: unknown }
 
+// --- structured search (the left-panel query layer) ---------------------
+export interface Facets {
+  window: { start: string; end: string }
+  subsystems: string[]; kinds: string[]; teams: string[]
+  metrics: string[]; logLevels: string[]; logTemplates: string[]
+  routes: string[]; traceStatuses: string[]; changeKinds: string[]
+}
+export interface EvidenceRef { kind: string; aspect: string; at?: string | null; payload?: unknown }
+export interface PinTarget { nodeIds: string[]; evidence?: EvidenceRef | null }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface SearchResult { type: string; id: string; title: string; subtitle: string; payload?: any; pin: PinTarget }
+
+export type SearchParams = {
+  scope: string; q?: string
+  subsystem?: string; kind?: string; team?: string
+  level?: string; template?: string; route?: string; status?: string; minMs?: number
+  metric?: string; split?: string; z?: number; minPct?: number; limit?: number
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch('/api' + path)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
@@ -69,4 +88,7 @@ export const api = {
   createBoard: (title?: string) => post<Created>('/boards', { title }),
   getBoard: (id: string) => get<Board>(`/boards/${id}`),
   pin: (boardId: string, item: PinInput) => post<Created>(`/boards/${boardId}/items`, item),
+
+  facets: () => get<Facets>('/search/facets'),
+  search: (p: SearchParams) => get<SearchResult[]>(`/search${qs({ ...p })}`),
 }

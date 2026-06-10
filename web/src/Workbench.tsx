@@ -1,41 +1,54 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, type PinInput } from './api'
+import { api, type Facets, type SearchResult, type SearchParams } from './api'
 
-// The workbench: left = search (the fire axe, mirroring the CLI), right = the
-// board (blank for now). Forage on the left, pin to the right.
+// The workbench: search is the main event (≥55% of the screen); the board is a
+// secondary evidence anchor. Search is structured (scope + facets + free text)
+// and returns rich, typed, pinnable result cards over /api/search.
 
-type Row = { id: string; title: string; sub?: string; pin?: PinInput }
+const SCOPES = ['anomalies', 'traces', 'logs', 'services', 'metrics', 'changes']
 
-const EXAMPLES = [
-  'anomalies',
-  'timeline',
-  'blast-radius payments-db',
-  'logs payments-db --grep timeout',
-  'traces --route checkout',
-  'graph',
-]
+// which facet controls each scope shows
+const CONTROLS: Record<string, string[]> = {
+  anomalies: ['z', 'subsystem', 'kind'],
+  traces: ['route', 'status'],
+  logs: ['q', 'level', 'template', 'subsystem'],
+  services: ['q', 'subsystem', 'kind', 'team'],
+  metrics: ['metric', 'subsystem'],
+  changes: ['subsystem', 'kind'],
+}
 
 export default function Workbench() {
   const [params, setParams] = useSearchParams()
   const boardId = params.get('board')
-  const [input, setInput] = useState('')
-  const [rows, setRows] = useState<Row[]>([])
-  const [verb, setVerb] = useState('')
+  const [facets, setFacets] = useState<Facets | null>(null)
+  const [scope, setScope] = useState('anomalies')
+  const [q, setQ] = useState('')
+  const [f, setF] = useState<Record<string, string>>({})
+  const [results, setResults] = useState<SearchResult[]>([])
   const [running, setRunning] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [pinned, setPinned] = useState<Set<string>>(new Set())
   const [pinCount, setPinCount] = useState(0)
 
-  async function runQuery(q: string) {
-    if (!q.trim()) return
+  useEffect(() => { api.facets().then(setFacets).catch(e => setErr(String(e))) }, [])
+
+  async function run() {
     setErr(null); setRunning(true)
     try {
-      const res = await dispatch(q)
-      setVerb(res.verb); setRows(res.rows)
-    } catch (e) { setErr(String(e)); setRows([]); setVerb('') }
+      const p: SearchParams = { scope, limit: 60 }
+      if (q.trim()) p.q = q.trim()
+      for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric'])
+        if (f[k]) (p as Record<string, unknown>)[k] = f[k]
+      p.z = f.z ? Number(f.z) : scope === 'anomalies' ? 3 : undefined
+      setResults(await api.search(p))
+    } catch (e) { setErr(String(e)); setResults([]) }
     finally { setRunning(false) }
   }
+
+  // re-run when scope or a facet changes (free text runs on submit)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { run() }, [scope, JSON.stringify(f)])
 
   async function ensureBoard(): Promise<string> {
     if (boardId) return boardId
@@ -44,12 +57,24 @@ export default function Workbench() {
     return c.id
   }
 
-  async function pin(row: Row) {
-    if (!row.pin || pinned.has(row.id)) return
+  async function pin(r: SearchResult) {
+    if (pinned.has(r.id)) return
     const id = await ensureBoard()
-    await api.pin(id, row.pin)
-    setPinned(prev => new Set(prev).add(row.id))
+    const ev = r.pin.evidence
+    await api.pin(id, { kind: ev?.kind ?? 'node', ref: r.pin.nodeIds[0] ?? '(fleet)', label: r.title, evidence: ev?.payload })
+    setPinned(prev => new Set(prev).add(r.id))
     setPinCount(c => c + 1)
+  }
+
+  const setField = (k: string, v: string) => setF(prev => ({ ...prev, [k]: v }))
+  const controls = CONTROLS[scope] ?? []
+  const opts = (k: string): string[] => {
+    if (!facets) return []
+    return ({
+      subsystem: facets.subsystems, kind: facets.kinds, team: facets.teams,
+      level: facets.logLevels, template: facets.logTemplates, route: facets.routes,
+      status: facets.traceStatuses, metric: facets.metrics,
+    } as Record<string, string[]>)[k] ?? []
   }
 
   return (
@@ -62,134 +87,86 @@ export default function Workbench() {
           </span>
         </div>
 
-        <form onSubmit={e => { e.preventDefault(); runQuery(input) }}>
-          <input className="search-input mono" placeholder="ask…  e.g.  anomalies --z 3"
-            value={input} onChange={e => setInput(e.target.value)} autoFocus />
+        <div className="scopes">
+          {SCOPES.map(s => (
+            <button key={s} className={'scope' + (s === scope ? ' active' : '')} onClick={() => setScope(s)}>{s}</button>
+          ))}
+        </div>
+
+        <form className="query-bar" onSubmit={e => { e.preventDefault(); run() }}>
+          <input className="search-input mono" value={q} onChange={e => setQ(e.target.value)}
+            placeholder={scope === 'logs' ? 'full-text search logs…' : scope === 'services' ? 'filter by name/id…' : 'free text (used by logs / services)'} />
+          <button className="run" type="submit">search</button>
         </form>
 
-        <div className="examples">
-          {EXAMPLES.map(ex => (
-            <button key={ex} className="ex mono" onClick={() => { setInput(ex); runQuery(ex) }}>{ex}</button>
+        <div className="facets">
+          {controls.includes('z') && (
+            <label>sensitivity
+              <select value={f.z ?? '3'} onChange={e => setField('z', e.target.value)}>
+                <option value="3">normal (z≥3)</option>
+                <option value="2">loose (z≥2)</option>
+                <option value="1">sensitive (z≥1)</option>
+              </select>
+            </label>
+          )}
+          {['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric'].filter(k => controls.includes(k)).map(k => (
+            <label key={k}>{k}
+              <select value={f[k] ?? ''} onChange={e => setField(k, e.target.value)}>
+                <option value="">any</option>
+                {opts(k).map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
           ))}
         </div>
 
         <div className="results">
-          {running && <div className="hint">running…</div>}
+          {running && <div className="hint">searching…</div>}
           {err && <div className="error">{err}</div>}
-          {!running && !err && rows.length === 0 && (
-            <div className="hint">Forage for something, then pin it to the board.</div>
-          )}
-          {!running && !err && rows.length > 0 && (
-            <div className="result-count">{rows.length} result{rows.length > 1 ? 's' : ''} · {verb}</div>
-          )}
-          {rows.map(r => (
-            <div className="result" key={r.id}>
-              <div className="r-main">
-                <div className="r-title mono">{r.title}</div>
-                {r.sub && <div className="r-sub">{r.sub}</div>}
-              </div>
-              {r.pin && (
-                <button className={'pin' + (pinned.has(r.id) ? ' done' : '')}
-                  onClick={() => pin(r)} disabled={pinned.has(r.id)}>
-                  {pinned.has(r.id) ? 'pinned' : 'pin'}
-                </button>
-              )}
-            </div>
-          ))}
+          {!running && !err && results.length === 0 && <div className="hint">No results. Try a different scope or loosen the facets.</div>}
+          {!running && !err && results.length > 0 && <div className="result-count">{results.length} result{results.length > 1 ? 's' : ''}</div>}
+          {results.map(r => <ResultCard key={r.id} r={r} pinned={pinned.has(r.id)} onPin={() => pin(r)} />)}
         </div>
       </div>
 
       <div className="board-pane">
         <div className="board-empty">
           <div className="board-empty-title">the board</div>
-          <div>pinned findings will hang here — the wall of red string.<br />(render coming next)</div>
+          <div>pinned findings hang here — the wall of red string.<br />(render coming next)</div>
         </div>
       </div>
     </div>
   )
 }
 
-// --- dispatch: parse a CLI-style query and call the matching endpoint ------
-function parse(q: string) {
-  const toks = q.trim().split(/\s+/).filter(Boolean)
-  if (toks[0] === 'weaver') toks.shift()
-  const verb = toks.shift() ?? ''
-  const pos: string[] = []
-  const opts: Record<string, string> = {}
-  for (let i = 0; i < toks.length; i++) {
-    const t = toks[i]
-    if (t.startsWith('--')) {
-      const k = t.slice(2)
-      if (i + 1 < toks.length && !toks[i + 1].startsWith('--')) opts[k] = toks[++i]
-      else opts[k] = 'true'
-    } else pos.push(t)
-  }
-  return { verb, pos, opts }
+function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; onPin: () => void }) {
+  const dir = r.type === 'anomaly' ? r.payload?.direction : undefined
+  return (
+    <div className={'card' + (dir ? ` dir-${dir}` : '')}>
+      <div className="card-head">
+        <span className={`badge badge-${r.type}`}>{r.type}</span>
+        <span className="card-title mono">{r.title}</span>
+        <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin} disabled={pinned}>
+          {pinned ? 'pinned' : 'pin'}
+        </button>
+      </div>
+      <div className="card-sub">{r.subtitle}</div>
+      {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} />}
+    </div>
+  )
 }
 
-const num = (s?: string) => (s !== undefined ? Number(s) : undefined)
-const clock = (iso?: string) => (iso ? new Date(iso).toISOString().slice(11, 19) : '-')
-const sign = (n: number) => (n > 0 ? '+' : '')
-
-async function dispatch(q: string): Promise<{ verb: string; rows: Row[] }> {
-  const { verb, pos, opts } = parse(q)
-  switch (verb) {
-    case 'graph': {
-      const g = await api.graph()
-      return { verb, rows: g.services.map(s => ({
-        id: 'svc:' + s.id, title: s.id, sub: `${s.kind} · ${s.subsystem ?? '-'}`,
-        pin: { kind: 'service', ref: s.id, label: s.id },
-      })) }
-    }
-    case 'anomalies': {
-      const a = await api.anomalies(opts.split, num(opts.z), num(opts['min-pct']))
-      return { verb, rows: a.map((x, i) => ({
-        id: `an:${x.subjectId}:${x.metric}:${i}`,
-        title: `${x.subjectId}  ${x.metric}  ${sign(x.deltaPct)}${x.deltaPct}%`,
-        sub: `z ${x.z} · ${x.direction} · onset ${clock(x.onsetTs)}`,
-        pin: { kind: 'anomaly', ref: x.subjectId, label: `${x.subjectId} ${x.metric} ${sign(x.deltaPct)}${x.deltaPct}%`, evidence: x },
-      })) }
-    }
-    case 'timeline': {
-      const t = await api.timeline(opts.split, num(opts.z), num(opts['min-pct']))
-      return { verb, rows: t.map((x, i) => ({
-        id: `tl:${x.subjectId}:${i}`, title: `${clock(x.onsetTs)}  ${x.subjectId}`,
-        sub: `first via ${x.metric} · z ${x.z}`,
-        pin: { kind: 'anomaly', ref: x.subjectId, label: `${x.subjectId} onset ${clock(x.onsetTs)}`, evidence: x },
-      })) }
-    }
-    case 'blast-radius': {
-      if (!pos[0]) throw new Error('usage: blast-radius <service>')
-      const b = await api.blastRadius(pos[0])
-      return { verb, rows: b.dependents.map(d => ({
-        id: 'br:' + d.serviceId, title: d.serviceId, sub: `${d.hops} hop${d.hops > 1 ? 's' : ''} from ${b.node}`,
-        pin: { kind: 'service', ref: d.serviceId, label: `${d.serviceId} (depends on ${b.node})` },
-      })) }
-    }
-    case 'logs': {
-      const l = await api.logs({ serviceId: pos[0], level: opts.level, grep: opts.grep, limit: num(opts.limit) ?? 50 })
-      return { verb, rows: l.map(x => ({
-        id: 'log:' + x.id, title: x.message, sub: `${x.level} · ${x.serviceId} · ${clock(x.ts)}`,
-        pin: { kind: 'log', ref: x.serviceId, label: x.message, evidence: x },
-      })) }
-    }
-    case 'traces': {
-      const tr = await api.traces({ route: opts.route, status: opts.status, minDurationMs: num(opts['min-ms']), limit: num(opts.limit) ?? 20 })
-      return { verb, rows: tr.map(x => ({
-        id: 'tr:' + x.id, title: `${x.requestTypeId}  ${x.durationMs}ms  ${x.status}`, sub: x.id.slice(0, 8),
-        pin: { kind: 'trace', ref: x.id, label: `${x.requestTypeId} ${x.durationMs}ms ${x.status}`, evidence: x },
-      })) }
-    }
-    case 'service': {
-      if (!pos[0]) throw new Error('usage: service <id>')
-      const d = await api.service(pos[0])
-      return { verb, rows: [{
-        id: 'svc:' + d.service.id, title: d.service.id,
-        sub: `${d.service.kind} · depends on ${d.dependsOn.length} · used by ${d.dependedOnBy.length}`,
-        pin: { kind: 'service', ref: d.service.id, label: d.service.id },
-      }] }
-    }
-    default:
-      throw new Error(`unknown query "${verb}". try: ${EXAMPLES.join(' · ')}`)
-  }
+function TraceMini({ spans }: { spans: { id: string; serviceId: string; selfMs: number; status: string }[] }) {
+  const top = [...spans].sort((a, b) => b.selfMs - a.selfMs).slice(0, 4)
+  const max = Math.max(1, ...top.map(s => s.selfMs))
+  return (
+    <div className="trace-mini">
+      {top.map(s => (
+        <div className="hop" key={s.id}>
+          <span className="hop-svc mono">{s.serviceId}</span>
+          <span className="hop-bar" style={{ width: `${(s.selfMs / max) * 100}%` }} />
+          <span className="hop-ms">{s.selfMs}ms</span>
+        </div>
+      ))}
+    </div>
+  )
 }
