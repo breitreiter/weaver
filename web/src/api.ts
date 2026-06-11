@@ -63,7 +63,7 @@ export type SearchParams = {
   subsystem?: string; kind?: string; team?: string
   level?: string; template?: string; route?: string; status?: string; minMs?: number
   metric?: string; split?: string; z?: number; minPct?: number; limit?: number
-  service?: string
+  service?: string; trace?: string
   from?: string; to?: string
 }
 

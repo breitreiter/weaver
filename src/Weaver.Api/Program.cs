@@ -311,7 +311,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
     string? subsystem, string? kind, string? team,
     string? level, string? template, string? route, string? status, int? minMs,
     string? metric, string? from, string? to, string? split, double? z, double? minPct, int? limit,
-    string? service) =>
+    string? service, string? trace) =>
 {
     var lim = limit ?? 50;
     scope ??= "services";
@@ -336,6 +336,10 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (kind is not null) sq = sq.Where(s => s.Kind == kind);
             if (team is not null) sq = sq.Where(s => s.OwnerTeam == team);
             if (service is not null) sq = sq.Where(s => s.Id == service);
+            // services that participated in a specific trace — the reverse of the
+            // traces scope's "traces touching this service" filter, so a pinned trace
+            // can fan out to every service it actually crossed.
+            if (trace is not null) sq = sq.Where(s => db.Spans.Any(sp => sp.TraceId == trace && sp.ServiceId == s.Id));
             if (!string.IsNullOrWhiteSpace(q)) sq = sq.Where(s => s.Id.Contains(q!) || s.Name.Contains(q!));
             var rows = sq.OrderBy(s => s.Id).Take(lim).ToList();
             return Results.Ok(rows.Select(ServiceResult).ToList());
@@ -725,6 +729,10 @@ static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
 {
     var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
     var hot = spans.FirstOrDefault();
+    // distinct services the trace crossed — lean metadata stored on the pin so the
+    // evidence drawer's "services in this trace" button can show the count without
+    // dragging the whole span list (or the participant nodes) onto the board.
+    var serviceCount = spans.Select(s => s.ServiceId).Distinct().Count();
     // pin lands ONE node — the hot hop. Other participants aren't dragged in (that
     // left orphan nodes with no stored reason); reach them via the trace card's
     // per-span search buttons. Spans still ride in the payload for those buttons.
@@ -734,7 +742,7 @@ static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
         hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
         new { trace = ToTraceDto(t), spans = spans.Select(ToSpanDto) },
         new PinTargetDto(nodeIds, new EvidenceRefDto("trace", "route:" + t.RequestTypeId, t.StartedAt,
-            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null })));
+            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null, serviceCount })));
 }
 
 static SearchResultDto MetricResult(Analysis.SeriesInput s)
