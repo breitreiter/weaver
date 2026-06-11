@@ -40,7 +40,7 @@ const FREEFORM_KINDS = [
 
 const COL_W = 240
 const ROW_H = 116
-const MAX_ROWS = 6 // a column taller than this wraps into a grid band
+const MAX_COLS = 6 // a band wider than this wraps into a grid band
 
 type ServiceNodeData = {
   service: string
@@ -50,7 +50,7 @@ type ServiceNodeData = {
 type EdgeData = { crossedOut: boolean; drawnBy: string; kind: string }
 
 type EvidenceNode = Node<ServiceNodeData, 'service'>
-type SelectedEdge = { id: string; crossedOut: boolean; label: string; source: string; target: string }
+type SelectedEdge = { id: string; label: string; source: string; target: string }
 
 export default function Board({ boardId, board, reload, focus, onFocus }: {
   boardId: string
@@ -73,9 +73,8 @@ export default function Board({ boardId, board, reload, focus, onFocus }: {
   }, [])
 
   const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-    const d = edge.data as EdgeData | undefined
     setSelected({
-      id: edge.id, crossedOut: !!d?.crossedOut, source: edge.source, target: edge.target,
+      id: edge.id, source: edge.source, target: edge.target,
       label: typeof edge.label === 'string' ? edge.label : '',
     })
   }, [])
@@ -84,11 +83,6 @@ export default function Board({ boardId, board, reload, focus, onFocus }: {
   async function drawEdge(from: string, to: string, kind: string, label: string) {
     await api.link(boardId, { from, to, kind, label: label.trim() || undefined, drawnBy: 'human' })
     setConnect(null); reload()
-  }
-  async function toggleCross() {
-    if (!selected) return
-    await api.crossOut(boardId, selected.id, !selected.crossedOut)
-    setSelected(null); reload()
   }
   async function removeEdge() {
     if (!selected) return
@@ -111,7 +105,7 @@ export default function Board({ boardId, board, reload, focus, onFocus }: {
       )}
 
       {selected && (
-        <EdgeToolbar selected={selected} onCross={toggleCross} onRemove={removeEdge} onClose={() => setSelected(null)} />
+        <EdgeToolbar selected={selected} onRemove={removeEdge} onClose={() => setSelected(null)} />
       )}
       {connect && (
         <RelationshipModal source={connect.source} target={connect.target}
@@ -134,7 +128,7 @@ function Flow({ nodes, edges, onConnect, onEdgeClick, onNodeClick, onPaneClick }
   const had = useRef(0)
   // fit once when the first nodes arrive (and again if a board goes empty→full).
   useEffect(() => {
-    if (had.current === 0 && nodes.length > 0) fitView({ duration: 300, padding: 0.2 })
+    if (had.current === 0 && nodes.length > 0) fitView({ duration: 300, padding: 0.2, maxZoom: 1 })
     had.current = nodes.length
   }, [nodes.length, fitView])
 
@@ -148,6 +142,7 @@ function Flow({ nodes, edges, onConnect, onEdgeClick, onNodeClick, onPaneClick }
       onNodeClick={onNodeClick}
       onPaneClick={onPaneClick}
       fitView
+      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
       nodesDraggable={false}
       nodesConnectable
       proOptions={{ hideAttribution: true }}
@@ -182,19 +177,17 @@ function ServiceNode({ data }: NodeProps<EvidenceNode>) {
   )
 }
 
-// floating toolbar for a selected edge — cross out (the climax) / remove.
-function EdgeToolbar({ selected, onCross, onRemove, onClose }: {
-  selected: SelectedEdge; onCross: () => void; onRemove: () => void; onClose: () => void
+// floating toolbar for a selected edge — remove the line (delete is the only
+// board op; ruling a lead out lives in the case log, not as struck-through
+// clutter on the wall — see project/plans/case-log.md).
+function EdgeToolbar({ selected, onRemove, onClose }: {
+  selected: SelectedEdge; onRemove: () => void; onClose: () => void
 }) {
   return (
     <div className="edge-toolbar">
       <span className="edge-toolbar-label mono">
         {selected.source} → {selected.target}{selected.label ? `  ·  ${selected.label}` : ''}
       </span>
-      <button className="etb-btn" onClick={onCross}>
-        <Icon name={selected.crossedOut ? 'undo' : 'content_cut'} size={15} />
-        {selected.crossedOut ? 'restore' : 'cross out'}
-      </button>
       <button className="etb-btn etb-danger" onClick={onRemove}><Icon name="delete" size={15} />remove</button>
       <button className="etb-btn" onClick={onClose}><Icon name="close" size={15} /></button>
     </div>
@@ -334,8 +327,9 @@ function buildGraph(board: BoardData): { nodes: EvidenceNode[]; edges: Edge[] } 
   return { nodes, edges }
 }
 
-// Deterministic, layered left→right by dependency depth — never force-directed.
-// Tall columns (e.g. many unconnected pins, all depth 0) wrap into a grid band.
+// Deterministic, layered top→bottom by dependency depth — never force-directed.
+// Matches the node connectors (target on top, source on bottom) and the tall panel.
+// Wide bands (e.g. many unconnected pins, all depth 0) wrap into a grid band.
 function layout(
   services: string[],
   links: { from: string; to: string }[],
@@ -368,23 +362,23 @@ function layout(
     frontier = [...new Set(next)].sort()
   }
 
-  // bucket by depth, place each column; wrap tall columns into sub-columns.
-  const columns = new Map<number, string[]>()
+  // bucket by depth, place each band top→bottom; wrap wide bands into sub-rows.
+  const bands = new Map<number, string[]>()
   for (const s of services) {
     const d = depth.get(s)!
-    ;(columns.get(d) ?? columns.set(d, []).get(d)!).push(s)
+    ;(bands.get(d) ?? bands.set(d, []).get(d)!).push(s)
   }
   const pos = new Map<string, { x: number; y: number }>()
-  let x = 0
-  for (const d of [...columns.keys()].sort((a, b) => a - b)) {
-    const col = columns.get(d)!.sort()
-    const subCols = Math.ceil(col.length / MAX_ROWS)
-    col.forEach((s, i) => {
-      const sub = Math.floor(i / MAX_ROWS)
-      const row = i % MAX_ROWS
-      pos.set(s, { x: x + sub * COL_W, y: row * ROW_H })
+  let y = 0
+  for (const d of [...bands.keys()].sort((a, b) => a - b)) {
+    const band = bands.get(d)!.sort()
+    const subRows = Math.ceil(band.length / MAX_COLS)
+    band.forEach((s, i) => {
+      const sub = Math.floor(i / MAX_COLS)
+      const col = i % MAX_COLS
+      pos.set(s, { x: col * COL_W, y: y + sub * ROW_H })
     })
-    x += Math.max(1, subCols) * COL_W
+    y += Math.max(1, subRows) * ROW_H
   }
   return pos
 }

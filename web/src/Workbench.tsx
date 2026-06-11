@@ -64,7 +64,12 @@ export default function Workbench() {
   const [board, setBoard] = useState<BoardData | null>(null)
   const reloadBoard = useCallback(async () => {
     if (!boardId) { setBoard(null); return }
-    try { setBoard(await api.getBoard(boardId)) }
+    try {
+      // keep the prior reference when the poll returns identical data, so the
+      // board memo (and React Flow's edge labels) don't churn every 2.5s.
+      const next = await api.getBoard(boardId)
+      setBoard(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
+    }
     catch (e) {
       // a 404 means the board is gone (e.g. DB reseeded) — drop the stale
       // param so we stop polling a dead id. other errors keep the last copy.
@@ -93,7 +98,7 @@ export default function Workbench() {
       const p: SearchParams = { scope, limit: RESULT_LIMIT }
       if (q.trim()) p.q = q.trim()
       if (f.service) p.service = f.service
-      for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric'])
+      for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric', 'trace'])
         if (f[k]) (p as Record<string, unknown>)[k] = f[k]
       // datetime-local emits "YYYY-MM-DDTHH:mm" — pad seconds so the range is
       // inclusive of the whole boundary minute (backend compares ISO strings).
@@ -151,6 +156,14 @@ export default function Workbench() {
   async function removeService(svc: string) {
     if (!boardId) return
     await api.deleteNode(boardId, svc)
+    reloadBoard()
+  }
+  // remove a red string from the evidence panel (mirrors the board's edge
+  // toolbar). Ruling a lead OUT is not a board op — that belongs in the case
+  // log, not as struck-through clutter on the wall (see plans/case-log.md).
+  async function removeEdge(edgeId: string) {
+    if (!boardId) return
+    await api.deleteEdge(boardId, edgeId)
     reloadBoard()
   }
   const controls = CONTROLS[scope] ?? []
@@ -260,7 +273,8 @@ export default function Workbench() {
       </div>
 
       <Evidence board={board} focus={focus} onFocus={setFocus} onExplore={exploreService}
-        onDeleteEvidence={removeEvidence} onDeleteService={removeService} />
+        onDeleteEvidence={removeEvidence} onDeleteService={removeService}
+        onDeleteEdge={removeEdge} />
     </div>
   )
 }

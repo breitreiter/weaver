@@ -28,13 +28,14 @@ const EXPLORE: { scope: string; icon: string; label: string }[] = [
 
 type NodeGroup = { service: string; label?: string; evidence: EvidenceItem[]; out: BoardEdge[] }
 
-export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService }: {
+export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService, onDeleteEdge }: {
   board: BoardData | null
   focus: string | null
   onFocus: (svc: string) => void
   onExplore: (scope: string, service: string, facets?: Record<string, string>) => void
   onDeleteEvidence: (evidenceId: string) => void
   onDeleteService: (service: string) => void
+  onDeleteEdge: (edgeId: string) => void
 }) {
   const groups = useMemo(() => board ? groupByService(board) : [], [board])
   const evidenceCount = useMemo(() => groups.reduce((n, g) => n + g.evidence.length, 0), [groups])
@@ -118,11 +119,18 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
             {g.out.length > 0 && (
               <div className="ev-strings">
                 {g.out.map(e => (
-                  <div key={e.id} className={'ev-string' + (e.crossedOut ? ' cut' : '')}>
-                    <Icon name={e.crossedOut ? 'content_cut' : 'trending_flat'} size={14} />
-                    <span className="mono">→ {e.to}</span>
-                    <span className="ev-string-kind">{e.kind}{e.label ? `: ${e.label}` : ''}</span>
-                    {e.crossedOut && <span className="ev-string-cut">cut</span>}
+                  <div key={e.id} className="ev-string">
+                    <Icon name="trending_flat" size={16} className="ev-string-ico" />
+                    <div className="ev-string-body">
+                      <div className="ev-string-dir mono">{g.service} → {e.to}</div>
+                      <div className="ev-string-kind">{e.kind}{e.label ? `: ${e.label}` : ''}</div>
+                    </div>
+                    <div className="ev-string-actions" onClick={ev => ev.stopPropagation()}>
+                      <button className="ev-trash" title="remove this line"
+                        onClick={() => onDeleteEdge(e.id)}>
+                        <Icon name="delete" size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -159,7 +167,20 @@ function itemSearches(ev: EvidenceItem): ItemSearch[] {
       return a ? [{ scope: 'logs', icon: 'description', label: 'logs like this', facets: { template: a, ...win } }] : []
     case 'trace': {
       const route = a.replace(/^route:/, '')
-      return route ? [{ scope: 'traces', icon: 'account_tree', label: 'this route', facets: { route, ...win } }] : []
+      const p = ev.payload as { trace?: { id?: string }; serviceCount?: number } | undefined
+      const traceId = p?.trace?.id
+      const out: ItemSearch[] = []
+      if (route) out.push({ scope: 'traces', icon: 'account_tree', label: 'this route', facets: { route, ...win } })
+      // the services this trace actually crossed — reverses the traces scope's
+      // "traces touching service X" filter. service:'' clears the single-service
+      // facet exploreService forces, so every participant comes back, not just the
+      // hot hop this evidence hangs under. serviceCount rides on the pin so the
+      // button can name the count without re-fetching the spans.
+      if (traceId) {
+        const n = p?.serviceCount
+        out.push({ scope: 'services', icon: 'lan', label: n ? `${n} services in this trace` : 'services in this trace', facets: { service: '', trace: traceId } })
+      }
+      return out
     }
     case 'anomaly':
       // anomalies don't filter by metric, but the metrics scope does — jump there.
