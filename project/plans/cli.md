@@ -122,29 +122,34 @@ starts). It learns levers as it reaches for them.
 
 ## The common task set (mapped to the loop)
 
-Grouped by phase; this is the verb surface the build targets.
+Grouped by phase; the implemented verb surface (see `cli-co-researcher.md`).
 
-**Observe**
+**Forage** (the unified `search` is the same lens as the UI's left panel)
 | intent | verb | returns |
 |---|---|---|
-| orient | `overview --base` | the fingerprint: counts, earliest onset, degraded routes, new log-template count, where alerts fired |
-| user-facing symptom | `routes` / `traces --status error` | degraded routes, edge symptoms |
-| characterize one thing | `service <id> --base` | one-screen card: deps, Δ across signals (with `shape_code`), new log templates, trace participation |
+| what can I filter by | `facets` | the vocabulary: subsystems/kinds/levels/routes/… |
+| orient | `graph` | topology: services, deps, routes |
+| query anything | `search <scope> [facets]` | typed, pinnable rows (anomalies\|traces\|logs\|services\|metrics\|changes), each with its id |
+| characterize one thing | `service <id>` / `evidence <id>` | deps + a `shape_code` per signal; the node dossier |
 | qualitative tell | `logs <id> --level error` / `trace <id>` | specific-vs-generic logs; where `self_ms` accrues |
 
 **Correlate (enumerations, never verdicts)**
 | intent | verb | returns |
 |---|---|---|
-| what moved | `anomalies --base` | enumerated deltas + `shape_code` |
+| what moved | `anomalies` / `search anomalies` | enumerated deltas + `shape_code` |
 | what moved first | `timeline` | onset ordering |
 | test a hypothesis | `blast-radius <id>` | downstream reachable set (does it cover the alerts?) |
+| ground a link | `relationships <a> <b>` | the facts between two services (dependency/route/temporal) |
 
-**Select & share**
+**Build the wall & share** (co-built with the human on one board)
 | intent | verb | returns |
 |---|---|---|
-| carve a region | `select "<expr>"` / `select --explain` | a subgraph → becomes a View |
-| pin / share | `pin --select … --base … --note …` | a durable View URL |
-| resume shared state | `show <view-id>` | load a human's View into the agent's context |
+| start / open | `board new [title]` / `board show [id\|url]` | the board + its URL |
+| pin a finding | `pin <typed-id>` (or `pin <service> --as …`) | lands exactly what the UI card would pin |
+| draw the string | `link <a> <b> --as "explains"` | a red-string edge (both endpoints land on the wall) |
+| prune | `unpin <evidence-id>` / `unpin <service> --all` | drop a finding / a whole service |
+| challenge | `board review` | the facts under each red string; flags ungrounded ones |
+| the payoff | `crossout <edge\|a b>` | cut a string after exoneration (kept, struck through) |
 
 Conspicuously absent: no `solve`, no `root-cause`. The verbs enumerate and
 characterize; the conclusion is the agent's to assemble by triangulating
@@ -152,22 +157,26 @@ them — which is the demo.
 
 ## Coordinating with the human's paneled view
 
-The human has spatial, parallel perception (graph + evidence + timeline
-panels at once); the agent has linear context. The **View/URL is the
-shared reference frame** (see `view-model.md`, `web-ui.md`).
+The human has spatial, parallel perception (search + board + evidence panels
+at once); the agent has linear context. The **board URL is the shared
+reference frame** (`/view?board=<id>`; see `sensemaking-pivot.md`,
+`web-ui.md`). Both surfaces read and write the same board through the same API,
+and the UI polls, so the agent's pins/links appear live ("watch Claude build
+the wall").
 
-- **Same ids on both surfaces.** The UI labels nodes/edges/traces with the
-  *exact ids* the CLI speaks — the non-negotiable foundation of "are we
-  looking at the same thing." "That red node top-left" → they read me its
-  id; `payments-db` → they see it highlighted.
-- **Bidirectional handoff.** Agent finds something → `pin` → URL → their
-  panel jumps there. They're looking at something → hand the agent the URL
-  → `show view-abc` loads their exact (selection, projection, base) into
-  the agent's context.
-- **The View is a shared whiteboard.** Its `narrative` is where the agent
-  writes *why* it's showing this; the human reads it in the panel,
-  annotates, and the agent reads theirs back. Async and durable
-  (Slack/ticket) — no co-presence required.
-- **Complementary division of labor:** the agent scans breadth and
-  triangulates fast, then pins a tight View; the human brings spatial
-  judgment to that frame and pushes back.
+- **Same ids on both surfaces.** Services are keyed by id; every search result
+  carries a **typed id** (`an:payments-db:latency_p99`, `tr:…`, `log:…`) shown
+  on the UI card *and* printed by `search` — the shared handle either side can
+  speak ("pin `an:payments-db:latency_p99`"). Board show prints edge + evidence
+  ids too, so `crossout`/`unpin` have something to name.
+- **Spatial talk doesn't translate; ids do.** Board layout is computed
+  client-side and never stored, so "the node top-left" means nothing to the
+  agent — but `payments-db` highlights on their screen. Anchor on ids.
+- **Bidirectional handoff.** Agent finds something → `pin` → the URL → their
+  panel shows it within a poll. They're looking at a board → paste the URL →
+  `board show <url>` (URLs work anywhere a board id goes) loads its state.
+- **Same words.** A pinned card's one-line summary is rendered once,
+  server-side, so `board show` and the evidence panel describe it identically.
+- **Complementary division of labor:** the agent forages breadth and
+  triangulates fast, then pins + links a tight wall; the human brings spatial
+  judgment to that frame and pushes back. Either can pin, link, cross out.

@@ -68,6 +68,38 @@ changes** per-result-set, **anomalies** per-result-set (event lollipops),
 - [ ] **Metric series on add** — metric search payload carries no points; fetch
       via `/api/metrics` on add, or widen the payload.
 
+## CLI ↔ UI alignment (the co-researcher lift)
+
+See `project/plans/cli-co-researcher.md` (2026-06-10 review: board contract is
+solid; foraging surfaces diverged, CLI is append-only, ids unprintable).
+**Built 2026-06-10** — phases 1–7 landed; tested end-to-end against the
+flash-sale dataset. Remaining polish noted below.
+
+- [x] **1. `weaver search` + `facets`** — forage parity with the UI's six
+      scopes/facets/caps/sort; every row prints its typed id. (Old per-type
+      verbs kept as-is alongside, not yet folded into aliases.)
+- [x] **2. Typed result ids as shared currency** — `pin <typed-id>` resolves
+      via `GET /api/search/resolve` (shared builders → byte-identical to the UI
+      pin); typed id shown + copyable on each UI result card.
+- [x] **3. Board readback with handles** — edge + evidence ids in `board show`;
+      evidence `summary` computed server-side, consumed by CLI *and* UI (the
+      `Evidence.tsx` summarize() copy retired).
+- [x] **4. Grounding verbs** — `relationships <a> <b>`, `evidence <svc>`,
+      `board review` (facts under each red string; flags ungrounded; enumerate only).
+- [x] **5. Symmetric editing** — `unpin <evidence-id>` / `unpin <svc> --all`.
+      Also: `link` now ensures both endpoints land on the wall (no dangling edge
+      the UI would drop).
+- [x] **6. Grace layer** — pasted-URL board args, `crossout <a b>` by pair,
+      did-you-mean service resolution, forgiving `--from 14:30` time.
+- [x] **7. Docs** — `cli.md` verb tables + coordination section → board model;
+      `agent-workflow.md` step 7; new `agent-briefing.md` (co-researcher manner).
+
+  Polish still open:
+  - [ ] Per-verb help (`weaver <verb> -h`) + teaching errors on bad facet values.
+  - [ ] Search state in the URL so `search --from-url` reproduces the human's query.
+  - [ ] Fold the per-type verbs (`anomalies`/`logs`/`traces`) into `search` aliases.
+  - [ ] Optional `pinnedBy` on evidence so the agent knows whose pin it is.
+
 ## Design to lock first
 
 - [ ] **Query language grammar** (the left fire-axe) — biggest unknown, *not*

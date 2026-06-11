@@ -37,7 +37,8 @@ export interface Relationships { a: string; b: string; relationships: Relationsh
 
 // A board node is a service on the wall; evidence (anomaly/log/trace/metric/
 // change) layers onto it. Edges connect services. No "item" — service or evidence.
-export interface EvidenceItem { id: string; kind: string; aspect: string; at?: string | null; payload?: unknown; label?: string }
+// summary is computed server-side (one renderer for CLI `board show` + the UI card)
+export interface EvidenceItem { id: string; kind: string; aspect: string; at?: string | null; payload?: unknown; label?: string; summary: string }
 export interface BoardNode { serviceId: string; label?: string; evidence: EvidenceItem[] }
 export interface BoardEdge { id: string; from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean }
 export interface LinkInput { from: string; to: string; kind?: string; label?: string; drawnBy?: string }

@@ -68,6 +68,10 @@
 .card-head { display: flex; align-items: center; gap: 10px; }
 .card-title { flex: 1; min-width: 0; color: var(--text-h); font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-id { flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-dim); font-size: 10px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+.card-id:hover { color: var(--text-h); border-color: var(--accent); }
 .card-sub { color: var(--text-dim); font-size: 11px; margin-top: 4px; }
 .card-time { color: var(--text-h); margin-right: 8px; }
 .time-tz { align-self: center; color: var(--text-dim); font-size: 10px; letter-spacing: 0.06em;

@@ -225,6 +225,13 @@ app.MapPost("/api/boards/{id}/pin", (BoardsDbContext db, string id, PinReq req) 
 app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq req) =>
 {
     if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
+    // Drawing a string to a service puts it on the wall: ensure a bare node for
+    // each endpoint so the edge can't dangle. The UI only ever links two on-board
+    // nodes; this keeps a CLI `link` to an un-pinned service consistent with that
+    // (else the UI silently drops the edge as having an absent endpoint).
+    foreach (var svc in new[] { req.From, req.To })
+        if (!string.IsNullOrWhiteSpace(svc) && !db.BoardNodes.Any(n => n.BoardId == id && n.ServiceId == svc))
+            db.BoardNodes.Add(new BoardNodeEntity { Id = NewId(), BoardId = id, ServiceId = svc, Label = null, CreatedAt = NowIso() });
     var edge = new BoardEdgeEntity
     {
         Id = NewId(), BoardId = id, FromService = req.From, ToService = req.To,
@@ -331,9 +338,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (service is not null) sq = sq.Where(s => s.Id == service);
             if (!string.IsNullOrWhiteSpace(q)) sq = sq.Where(s => s.Id.Contains(q!) || s.Name.Contains(q!));
             var rows = sq.OrderBy(s => s.Id).Take(lim).ToList();
-            return Results.Ok(rows.Select(s => new SearchResultDto(
-                "service", "svc:" + s.Id, s.Id, $"{s.Kind} · {s.Subsystem ?? "-"}",
-                new { s.Kind, s.Subsystem, s.OwnerTeam }, new PinTargetDto([s.Id], null))).ToList());
+            return Results.Ok(rows.Select(ServiceResult).ToList());
         }
         case "anomalies":
         {
@@ -349,11 +354,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
                 .Where(a => a.SubjectKind != "service" || pass(a.SubjectId))
                 .Where(a => service is null || a.SubjectId == service)
                 .Where(a => OnsetInWindow(a.OnsetTs, fromT, toT)).Take(lim).ToList();
-            return Results.Ok(rows.Select(a => new SearchResultDto(
-                "anomaly", $"an:{a.SubjectId}:{a.Metric}",
-                $"{a.SubjectId}  {a.Metric}  {(a.DeltaPct > 0 ? "+" : "")}{a.DeltaPct}%",
-                $"z {a.Z} · {a.Direction} · onset {a.OnsetTs}", a,
-                new PinTargetDto([a.SubjectId], new EvidenceRefDto("anomaly", a.Metric, a.OnsetTs, a)))).ToList());
+            return Results.Ok(rows.Select(AnomalyResult).ToList());
         }
         case "logs":
         {
@@ -369,9 +370,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (from is not null) lq = lq.Where(l => string.Compare(l.Ts, from) >= 0);
             if (to is not null) lq = lq.Where(l => string.Compare(l.Ts, to) <= 0);
             var rows = lq.OrderByDescending(l => l.Ts).Take(lim).ToList().Where(l => pass(l.ServiceId));
-            return Results.Ok(rows.Select(l => new SearchResultDto(
-                "log", "log:" + l.Id, l.Message, $"{l.Level} · {l.ServiceId} · {l.Ts}", ToLogDto(l),
-                new PinTargetDto([l.ServiceId], new EvidenceRefDto("log", l.TemplateId, l.Ts, ToLogDto(l))))).ToList());
+            return Results.Ok(rows.Select(LogResult).ToList());
         }
         case "traces":
         {
@@ -385,22 +384,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             // this is how the traces button finds the traces that involve the on-board node.
             if (service is not null) tq = tq.Where(t => db.Spans.Any(s => s.TraceId == t.Id && s.ServiceId == service));
             var rows = tq.OrderByDescending(t => t.DurationMs).Take(lim).ToList();
-            return Results.Ok(rows.Select(t =>
-            {
-                var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
-                var hot = spans.FirstOrDefault();
-                // pin lands ONE node — the hot hop. The other participants aren't dragged
-                // in (that left orphan nodes with no stored reason); reach them on demand
-                // via the per-span search buttons in the trace card. Spans still ride in the
-                // payload so those buttons know every service the trace touched.
-                List<string> nodeIds = hot is not null ? [hot.ServiceId] : [];
-                return new SearchResultDto(
-                    "trace", "tr:" + t.Id, $"{t.RequestTypeId}  {t.DurationMs}ms  {t.Status}",
-                    hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
-                    new { trace = ToTraceDto(t), spans = spans.Select(ToSpanDto) },
-                    new PinTargetDto(nodeIds, new EvidenceRefDto("trace", "route:" + t.RequestTypeId, t.StartedAt,
-                        new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null })));
-            }).ToList());
+            return Results.Ok(rows.Select(t => TraceResult(db, t)).ToList());
         }
         case "metrics":
         {
@@ -412,29 +396,68 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (metric is not null) sel = sel.Where(s => s.Metric == metric);
             else if (service is null) sel = sel.Where(s => s.Metric == "latency_p99");
             var rows = sel.OrderBy(s => s.Id).ThenBy(s => s.Metric).Take(lim).ToList();
-            return Results.Ok(rows.Select(s =>
-            {
-                var tr = Trajectory.Encode(s.Points.Select(p => p.Val).ToList(), MinutesOf(s.Points), UnitFor(s.Metric));
-                return new SearchResultDto(
-                    "metric", $"me:{s.Id}:{s.Metric}", $"{s.Id}  {s.Metric}", tr.ShapeCode,
-                    new { tr.ShapeCode, tr.Prose, tr.Min, tr.Max, tr.Mean },
-                    new PinTargetDto([s.Id], new EvidenceRefDto("metric", s.Metric, null, new { tr.ShapeCode, tr.Prose })));
-            }).ToList());
+            return Results.Ok(rows.Select(MetricResult).ToList());
         }
         case "changes":
         {
             var rows = ChangeEvents(db, from, to, null)
                 .Where(c => c.TargetId is null || pass(c.TargetId))
                 .Where(c => service is null || c.TargetId == service).Take(lim).ToList();
-            return Results.Ok(rows.Select(c => new SearchResultDto(
-                "change", "ce:" + c.Id, c.Summary,
-                $"{c.Kind} · {c.Ts}" + (c.TargetId is not null ? " · " + c.TargetId : " · fleet-wide"), c,
-                new PinTargetDto(c.TargetId is not null ? [c.TargetId] : [],
-                    new EvidenceRefDto("change", c.Kind, c.Ts, c)))).ToList());
+            return Results.Ok(rows.Select(ChangeResult).ToList());
         }
         default:
             return Results.BadRequest(new { error = $"unknown scope '{scope}' (services|anomalies|logs|traces|metrics|changes)" });
     }
+});
+
+// --- search: resolve a typed id -> the single result (for `pin <id>`) --------
+// A search-result id is self-describing (an:svc:metric, tr:id, log:id, me:svc:metric,
+// ce:id, svc:id). Resolving it through the SAME builders the list query uses means a
+// CLI `pin <id>` lands exactly what the UI card would have pinned.
+app.MapGet("/api/search/resolve", (WeaverDbContext db, string id) =>
+{
+    var c = id.IndexOf(':');
+    if (c <= 0) return Results.BadRequest(new { error = $"not a typed id: '{id}'" });
+    var prefix = id[..c];
+    var rest = id[(c + 1)..];
+
+    switch (prefix)
+    {
+        case "svc":
+            return db.Services.FirstOrDefault(s => s.Id == rest) is { } s
+                ? Results.Ok(ServiceResult(s)) : NotFound(id);
+        case "log":
+            return db.Logs.FirstOrDefault(l => l.Id == rest) is { } l
+                ? Results.Ok(LogResult(l)) : NotFound(id);
+        case "tr":
+            return db.Traces.FirstOrDefault(t => t.Id == rest) is { } t
+                ? Results.Ok(TraceResult(db, t)) : NotFound(id);
+        case "ce":
+            return ChangeEvents(db, null, null, null).FirstOrDefault(x => x.Id == rest) is { } ce
+                ? Results.Ok(ChangeResult(ce)) : NotFound(id);
+        case "an":
+        case "me":
+        {
+            // an:<subjectId>:<metric> / me:<subjectId>:<metric> — split on the LAST
+            // colon so subject ids containing ':' (edges) survive.
+            var dot = rest.LastIndexOf(':');
+            if (dot <= 0) return Results.BadRequest(new { error = $"malformed id: '{id}'" });
+            var subject = rest[..dot];
+            var metric = rest[(dot + 1)..];
+            var (series, at) = LoadSeries(db, null);
+            if (prefix == "me")
+                return series.FirstOrDefault(x => x.Id == subject && x.Metric == metric) is { } ser
+                    ? Results.Ok(MetricResult(ser)) : NotFound(id);
+            return Analysis.Anomalies(series, at, 3.0, 15.0)
+                    .FirstOrDefault(a => a.SubjectId == subject && a.Metric == metric) is { } an
+                ? Results.Ok(AnomalyResult(an))
+                : Results.NotFound(new { error = $"'{id}' is not currently an anomaly at z≥3 — pin it manually if you mean to." });
+        }
+        default:
+            return Results.BadRequest(new { error = $"unknown id prefix '{prefix}' (svc|log|tr|ce|an|me)" });
+    }
+
+    static IResult NotFound(string id) => Results.NotFound(new { error = $"no result for id '{id}'" });
 });
 
 // --- search: volume histogram (honest counts over the FULL matching set) ----
@@ -625,10 +648,103 @@ static (List<Analysis.SeriesInput> series, DateTimeOffset split) LoadSeries(Weav
     return (series, at);
 }
 
-static EvidenceItemDto ToEvidenceDto(EvidenceEntity e) =>
-    new(e.Id, e.Kind, e.Aspect, e.At, ParseJson(e.Payload), e.Label);
+static EvidenceItemDto ToEvidenceDto(EvidenceEntity e)
+{
+    var payload = ParseJson(e.Payload);
+    return new(e.Id, e.Kind, e.Aspect, e.At, payload, e.Label, EvidenceSummary(e.Kind, payload));
+}
 static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
     new(e.Id, e.FromService, e.ToService, e.Kind, e.Label, e.DrawnBy, e.CrossedOut);
+
+// The one-line, kind-aware summary of a pinned payload — the SINGLE source of the
+// words both `board show` (CLI) and the evidence card (UI) print. Payloads vary
+// (rich UI search results vs a CLI `--note`), so read defensively and fall back to
+// the empty string rather than throw on a missing field. (Ported from the old
+// Evidence.tsx summarize(); the TS copy is retired.)
+static string EvidenceSummary(string kind, JsonElement p)
+{
+    if (p.ValueKind != JsonValueKind.Object) return "";
+    string S(JsonElement o, string n) => o.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+    double? N(string n) => p.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
+    string Join(string sep, params string[] xs) => string.Join(sep, xs.Where(x => !string.IsNullOrEmpty(x)));
+    switch (kind)
+    {
+        case "anomaly":
+        {
+            var dir = S(p, "direction") == "up" ? "↑" : S(p, "direction") == "down" ? "↓" : "";
+            var pct = N("deltaPct") is { } d ? $"{(d >= 0 ? "+" : "")}{Math.Round(d)}%" : "";
+            var z = N("z") is { } zz ? $" (z≈{Math.Round(zz)})" : "";
+            return Join(" ", S(p, "metric"), dir, pct) + z;
+        }
+        case "log":
+        {
+            var head = Join(" ", S(p, "level").ToUpperInvariant(), S(p, "templateId"));
+            var msg = S(p, "message");
+            return msg != "" ? $"{head} — {msg}" : head;
+        }
+        case "change":
+            return S(p, "summary") != "" ? S(p, "summary") : S(p, "kind");
+        case "metric":
+            return Join(" · ", S(p, "shapeCode"), S(p, "prose"));
+        case "trace":
+        {
+            // a UI search pin nests the trace under `trace`; a manual pin may be flat.
+            var t = p.TryGetProperty("trace", out var tv) && tv.ValueKind == JsonValueKind.Object ? tv : p;
+            var route = S(t, "requestTypeId") != "" ? S(t, "requestTypeId") : S(t, "route");
+            var ms = t.TryGetProperty("durationMs", out var mv) && mv.ValueKind == JsonValueKind.Number ? $"{mv.GetInt32()}ms" : "";
+            return Join(" · ", route, ms, S(t, "status"));
+        }
+        default:
+            return S(p, "note");
+    }
+}
+
+// --- search result builders (one shape, shared by /api/search + /resolve) ----
+// Both the list query and resolve-by-id project through these, so a result pinned
+// from the CLI by id is byte-identical to one pinned from the UI card.
+static SearchResultDto ServiceResult(ServiceEntity s) =>
+    new("service", "svc:" + s.Id, s.Id, $"{s.Kind} · {s.Subsystem ?? "-"}",
+        new { s.Kind, s.Subsystem, s.OwnerTeam }, new PinTargetDto([s.Id], null));
+
+static SearchResultDto LogResult(LogEventEntity l) =>
+    new("log", "log:" + l.Id, l.Message, $"{l.Level} · {l.ServiceId} · {l.Ts}", ToLogDto(l),
+        new PinTargetDto([l.ServiceId], new EvidenceRefDto("log", l.TemplateId, l.Ts, ToLogDto(l))));
+
+static SearchResultDto ChangeResult(ChangeEventDto c) =>
+    new("change", "ce:" + c.Id, c.Summary,
+        $"{c.Kind} · {c.Ts}" + (c.TargetId is not null ? " · " + c.TargetId : " · fleet-wide"), c,
+        new PinTargetDto(c.TargetId is not null ? [c.TargetId] : [], new EvidenceRefDto("change", c.Kind, c.Ts, c)));
+
+static SearchResultDto AnomalyResult(AnomalyDto a) =>
+    new("anomaly", $"an:{a.SubjectId}:{a.Metric}",
+        $"{a.SubjectId}  {a.Metric}  {(a.DeltaPct > 0 ? "+" : "")}{a.DeltaPct}%",
+        $"z {a.Z} · {a.Direction} · onset {a.OnsetTs}", a,
+        new PinTargetDto([a.SubjectId], new EvidenceRefDto("anomaly", a.Metric, a.OnsetTs, a)));
+
+static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
+{
+    var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
+    var hot = spans.FirstOrDefault();
+    // pin lands ONE node — the hot hop. Other participants aren't dragged in (that
+    // left orphan nodes with no stored reason); reach them via the trace card's
+    // per-span search buttons. Spans still ride in the payload for those buttons.
+    List<string> nodeIds = hot is not null ? [hot.ServiceId] : [];
+    return new SearchResultDto(
+        "trace", "tr:" + t.Id, $"{t.RequestTypeId}  {t.DurationMs}ms  {t.Status}",
+        hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
+        new { trace = ToTraceDto(t), spans = spans.Select(ToSpanDto) },
+        new PinTargetDto(nodeIds, new EvidenceRefDto("trace", "route:" + t.RequestTypeId, t.StartedAt,
+            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null })));
+}
+
+static SearchResultDto MetricResult(Analysis.SeriesInput s)
+{
+    var tr = Trajectory.Encode(s.Points.Select(p => p.Val).ToList(), MinutesOf(s.Points), UnitFor(s.Metric));
+    return new SearchResultDto(
+        "metric", $"me:{s.Id}:{s.Metric}", $"{s.Id}  {s.Metric}", tr.ShapeCode,
+        new { tr.ShapeCode, tr.Prose, tr.Min, tr.Max, tr.Mean },
+        new PinTargetDto([s.Id], new EvidenceRefDto("metric", s.Metric, null, new { tr.ShapeCode, tr.Prose })));
+}
 static string NewId() => Guid.NewGuid().ToString("N")[..8];
 static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 

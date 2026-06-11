@@ -103,7 +103,10 @@ public record RelationshipsDto(string A, string B, IReadOnlyList<RelationshipDto
 // --- the board (sensemaking; co-built by human + agent) ------------------
 
 // A board node is a service placed on the wall, carrying its layered evidence.
-public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At, JsonElement? Payload, string? Label);
+// Summary is the one-line, kind-aware rendering of the payload — computed
+// server-side so the CLI's `board show` and the UI's evidence card read the SAME
+// words. (Both used to render this independently; the UI copy is retired.)
+public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At, JsonElement? Payload, string? Label, string Summary);
 public record BoardNodeDto(string ServiceId, string? Label, IReadOnlyList<EvidenceItemDto> Evidence);
 public record BoardEdgeDto(string Id, string From, string To, string Kind, string? Label, string DrawnBy, bool CrossedOut);
 public record BoardDto(string Id, string Title, string CreatedAt,

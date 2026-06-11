@@ -93,7 +93,7 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
                   <Icon name={KIND_ICON[ev.kind] ?? 'help'} size={18} className="ev-item-ico" />
                   <div className="ev-item-body">
                     {ev.label && <div className="ev-item-label">{ev.label}</div>}
-                    <div className="ev-item-sub mono">{summarize(ev.kind, ev.payload)}</div>
+                    <div className="ev-item-sub mono">{ev.summary}</div>
                     {ev.kind === 'metric' && real && <MetricSparkline service={g.service} metric={ev.aspect} />}
                     {searches.length > 0 && (
                       <div className="ev-item-search" onClick={e => e.stopPropagation()}>
@@ -186,36 +186,9 @@ function aroundWindow(at: string): Record<string, string> {
   return { from: fmt(t - half), to: fmt(t + half) }
 }
 
-// per-kind one-liner over the pinned evidence payload (camelCase on the wire).
-// Defensive: payloads vary (UI search results vs CLI `--note`), so fall back to
-// the label rather than throw on a missing field.
-function summarize(kind: string, ev: unknown): string {
-  if (!ev || typeof ev !== 'object') return ''
-  const p = ev as Record<string, unknown>
-  switch (kind) {
-    case 'anomaly': {
-      const dir = p.direction === 'up' ? '↑' : p.direction === 'down' ? '↓' : ''
-      const pct = typeof p.deltaPct === 'number' ? pctStr(p.deltaPct) : ''
-      const z = typeof p.z === 'number' ? ` (z≈${Math.round(p.z)})` : ''
-      return [p.metric, dir, pct].filter(Boolean).join(' ') + z
-    }
-    case 'log':
-      return [str(p.level).toUpperCase(), str(p.templateId)].filter(Boolean).join(' ')
-        + (p.message ? ` — ${str(p.message)}` : '')
-    case 'change':
-      return str(p.summary) || str(p.kind)
-    case 'metric':
-      return [str(p.shapeCode), str(p.prose)].filter(Boolean).join(' · ')
-    case 'trace':
-      return [str(p.route) || str(p.requestTypeId), p.durationMs != null ? `${p.durationMs}ms` : '', str(p.status)]
-        .filter(Boolean).join(' · ')
-    default:
-      return str(p.note) || ''
-  }
-}
+// the per-kind one-liner now comes from the server (EvidenceItem.summary) — one
+// renderer shared with the CLI's `board show`, so the two surfaces never drift.
 
-const str = (v: unknown) => (v == null ? '' : String(v))
-const pctStr = (n: number) => `${n >= 0 ? '+' : ''}${Math.round(n).toLocaleString()}%`
 // React Flow node ids are service ids (safe chars), but guard the selector anyway.
 const cssId = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_')
 

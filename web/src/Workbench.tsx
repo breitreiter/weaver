@@ -286,6 +286,8 @@ function ResultCard({ r, pinned, onPin, onExplore }: { r: SearchResult; pinned: 
           <Icon name={TYPE_ICON[r.type] ?? 'help'} size={15} /> {r.type}
         </span>
         <span className="card-title mono">{r.title}</span>
+        <button className="card-id mono" title={`typed id — pin from the CLI with: weaver pin ${r.id}  (click to copy)`}
+          onClick={() => navigator.clipboard?.writeText(r.id)}>{r.id}</button>
         <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin}
           title={pinned ? 'pinned to the board — click to pin again' : 'pin to the board'}>
           <Icon name="graph_3" size={18} />

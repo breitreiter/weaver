@@ -12,6 +12,16 @@ using Weaver.Core;
 var argv = new ArgParser(args);
 var verb = argv.Verb;
 var api = new Api(Environment.GetEnvironmentVariable("WEAVER_API") ?? "http://localhost:5180");
+FacetsDto? facetsCache = null;  // lazily fetched for time/did-you-mean resolution
+
+// the six search scopes + their sort labels, mirroring the UI's left panel.
+GraphDto? graphCache = null;  // lazily fetched for did-you-mean service resolution
+string[] scopes = ["anomalies", "traces", "logs", "services", "metrics", "changes"];
+var sortBy = new Dictionary<string, string>
+{
+    ["anomalies"] = "magnitude", ["traces"] = "duration", ["logs"] = "recency",
+    ["changes"] = "time", ["services"] = "name",
+};
 
 try
 {
@@ -27,8 +37,13 @@ try
         case "blast-radius": BlastRadius(); break;
         case "anomalies": Anomalies(); break;
         case "timeline": Timeline(); break;
+        case "search": Search(); break;
+        case "facets": Facets(); break;
+        case "relationships" or "rel": Relationships(); break;
+        case "evidence": NodeEvidence(); break;
         case "board": Board(); break;
         case "pin": Pin(); break;
+        case "unpin": Unpin(); break;
         case "link": Link(); break;
         case "crossout": CrossOut(); break;
         case "help" or "" or null: Help(); break;
@@ -46,31 +61,41 @@ void Help()
     Console.WriteLine("""
         weaver — investigate a service graph from observed telemetry
 
-        observe
-          graph                         the topology: services, deps, routes
+        forage (the same lens the UI's left panel uses)
+          search <scope> [facets]       the unified query: anomalies | traces |
+                                          logs | services | metrics | changes.
+                                          every row prints a typed id you can pin.
+          facets                        what subsystems/levels/routes/… exist
           service <id>                  one service: deps + a shape per signal
           metrics <id> [--metric m]     a signal's trajectory (shape + prose)
           logs [<id>] [--grep q]        log lines (FTS via --grep)
           traces [--route r]            sampled request traces, slowest first
           trace <id>                    one trace: spans + where self-time went
-          changes [--target s]          deploy/config/flag events (annotation stream)
+          changes [--target s]          deploy/config/flag events
+          evidence <service>            the node dossier (signals/logs/changes)
 
         correlate (enumerations, never a verdict)
           anomalies [--split t] [--z n] what moved vs the base window
           timeline  [--split t]         who moved first (onset ordering)
           blast-radius <id>             who depends on a node (tests a guess)
+          relationships <a> <b>         the facts between two services (ground a link)
 
         build the wall (the board — co-built with the human)
           board new [title]             start a board; prints its id + URL
-          pin <service> [--label L]     place a service on the board (a node)
-              [--as K --aspect A]         layer evidence onto it (--note, --evidence, --at)
+          board show [id|url]           print the board (with edge + evidence ids)
+          board review [id|url]         list the facts under each red string
+          pin <id|service>              pin a search result by its typed id, OR a
+              [--as K --aspect A]         service + manual evidence (--note/--evidence/--at)
+          unpin <evidence-id>           drop one finding
+          unpin <service> --all         remove a service, its evidence + its strings
           link <a> <b> --as "explains"  draw a red-string edge between two services
-          crossout <edge> [--restore]   cut a red string (kept, struck through)
-          board show [id]               print the board
+          crossout <edge|a b> [--restore]  cut a red string (kept, struck through)
 
         common flags: --json (raw)  --raw (series points)  --limit N
-                      --kind service|edge  --level L  --status S
-                      --split <iso>  --z <n>  --min-pct <n>  --board <id>
+          facets: --grep q  --subsystem S  --kind K  --team T  --level L
+                  --template T  --route R  --status S  --metric M  --service S
+                  --from <t>  --to <t>  --split <iso>  --z <n>  --min-pct <n>
+          --board <id|url>  (or set $WEAVER_BOARD; a pasted /view?board= URL works)
         env: WEAVER_API (default :5180)  WEAVER_WEB (:5173)  WEAVER_BOARD (current board)
         """);
 }
@@ -91,7 +116,7 @@ void Graph()
 
 void Service()
 {
-    var id = argv.Need(0, "service id");
+    var id = ResolveService(argv.Need(0, "service id"));
     var d = api.Get<ServiceDetailDto>($"/api/services/{id}");
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
 
@@ -112,8 +137,10 @@ void Service()
 
 void Metrics()
 {
-    var id = argv.Need(0, "subject id");
     var kind = argv.Opt("kind", "service");
+    var rawId = argv.Need(0, "subject id");
+    // only services live in the graph; resolve those, pass edge/other ids through.
+    var id = kind == "service" ? ResolveService(rawId) : rawId;
     var qs = $"/api/metrics?subjectId={id}&subjectKind={kind}";
     if (argv.Opt("metric") is { } m) qs += $"&metric={m}";
     if (argv.Opt("from") is { } f) qs += $"&from={f}";
@@ -223,7 +250,7 @@ void Changes()
 
 void BlastRadius()
 {
-    var id = argv.Need(0, "service id");
+    var id = ResolveService(argv.Need(0, "service id"));
     var b = api.Get<BlastRadiusDto>($"/api/blast-radius/{id}");
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
 
@@ -264,6 +291,133 @@ void Timeline()
          $"weaver service {t[0].SubjectId}");
 }
 
+// --- forage: the unified search (same lens as the UI's left panel) --------
+// Six scopes, the same facets/caps/sort the UI uses. Every row leads with its
+// TYPED ID (an:svc:metric, tr:…, log:…, me:…, ce:…, svc:…) — the shared handle
+// the human and agent both speak and that `pin <id>` resolves.
+void Search()
+{
+    var scope = argv.Pos.Count > 0 ? argv.Pos[0] : "anomalies";
+    if (!scopes.Contains(scope))
+    {
+        Console.Error.WriteLine($"weaver: unknown scope '{scope}'. one of: {string.Join(" | ", scopes)}");
+        Environment.Exit(2);
+    }
+    var limit = argv.Limit ?? 60;
+    var qs = SearchQuery(scope, limit);
+    var rows = api.Get<List<SearchResultDto>>("/api/search" + qs);
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+
+    var capped = rows.Count >= limit;
+    var sort = sortBy.TryGetValue(scope, out var s) ? s : null;
+    Console.WriteLine(capped
+        ? $"{scope} — top {limit}{(sort is not null ? $" by {sort}" : "")} (more exist)"
+        : $"{scope} — {rows.Count} result{(rows.Count == 1 ? "" : "s")}");
+    if (rows.Count == 0) { Hint("weaver facets   (what can I filter by?)"); return; }
+
+    foreach (var r in rows)
+    {
+        Console.WriteLine($"  {r.Id}");
+        Console.WriteLine($"      {r.Title}");
+        if (!string.IsNullOrWhiteSpace(r.Subtitle)) Console.WriteLine($"      {r.Subtitle}");
+    }
+    Hint($"weaver pin {rows[0].Id}   (pin the top finding to the board)",
+         "weaver facets                  (narrow with another facet)");
+}
+
+void Facets()
+{
+    var f = api.Get<FacetsDto>("/api/search/facets");
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+    Console.WriteLine($"window:      {f.Window.Start}  ..  {f.Window.End}");
+    void Row(string name, IReadOnlyList<string> vals) =>
+        Console.WriteLine($"{name,-12} {(vals.Count == 0 ? "(none)" : string.Join(", ", vals))}");
+    Row("subsystems:", f.Subsystems);
+    Row("kinds:", f.Kinds);
+    Row("teams:", f.Teams);
+    Row("metrics:", f.Metrics);
+    Row("log levels:", f.LogLevels);
+    Row("templates:", f.LogTemplates);
+    Row("routes:", f.Routes);
+    Row("trace stat:", f.TraceStatuses);
+    Row("change kinds:", f.ChangeKinds);
+    Hint("weaver search anomalies --subsystem <s>", "weaver search logs --grep \"<term>\" --level error");
+}
+
+// the observed facts between two services — what a red string can be grounded in.
+// Enumerates (dependency / shared route / temporal precedence); never crowns a cause.
+void Relationships()
+{
+    var a = ResolveService(argv.Need(0, "service a"));
+    var b = ResolveService(argv.Need(1, "service b"));
+    var r = api.Get<RelationshipsDto>($"/api/relationships?a={Uri.EscapeDataString(a)}&b={Uri.EscapeDataString(b)}");
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+    if (r.Relationships.Count == 0)
+    {
+        Console.WriteLine($"no recorded relationship between {a} and {b} — a link here is your own assertion.");
+        Hint($"weaver link {a} {b} --as \"explains\"   (draw it as a hypothesis)");
+        return;
+    }
+    Console.WriteLine($"{r.Relationships.Count} fact(s) between {a} and {b} (enumerated, not ranked):");
+    foreach (var rel in r.Relationships)
+        Console.WriteLine($"  [{rel.Group,-10}] {rel.From} -> {rel.To}  {rel.Title}\n      {rel.Detail}");
+    Hint($"weaver link {r.Relationships[0].From} {r.Relationships[0].To} --as \"{r.Relationships[0].SuggestedLabel}\"");
+}
+
+void NodeEvidence()
+{
+    var id = ResolveService(argv.Need(0, "service id"));
+    var qs = $"/api/nodes/{id}/evidence";
+    if (argv.Opt("from") is { } f) qs += $"?from={Uri.EscapeDataString(f)}";
+    if (argv.Opt("to") is { } t) qs += (qs.Contains('?') ? "&" : "?") + $"to={Uri.EscapeDataString(t)}";
+    var d = api.Get<NodeEvidenceDto>(qs);
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+
+    Console.WriteLine($"{d.Node.Id}  ({d.Node.Kind}, subsystem={d.Node.Subsystem ?? "-"}, team={d.Node.OwnerTeam ?? "-"})");
+    Console.WriteLine($"window: {d.Window.Start}  ..  {d.Window.End}");
+    Console.WriteLine("signals:");
+    foreach (var sig in d.Signals)
+        Console.WriteLine($"  {sig.Metric,-15} {sig.ShapeCode}");
+    if (d.Logs.Count > 0)
+    {
+        Console.WriteLine("log groups:");
+        foreach (var lg in d.Logs.Take(argv.Limit ?? 8))
+            Console.WriteLine($"  {lg.Count,5}  {lg.Level,-5} {lg.TemplateId,-22} {lg.Sample}");
+    }
+    if (d.Changes.Count > 0)
+    {
+        Console.WriteLine("changes:");
+        foreach (var c in d.Changes)
+            Console.WriteLine($"  {Clock(c.Ts),-10} {c.Kind,-12} {c.Summary}");
+    }
+    Console.WriteLine($"traces touching this service: {d.TracesParticipated}");
+    Hint($"weaver search anomalies --service {id}", $"weaver pin <id>   (pin a finding from above)");
+}
+
+// build the /api/search query string from the shared facet flags.
+string SearchQuery(string scope, int limit)
+{
+    var p = new List<string> { $"scope={scope}", $"limit={limit}" };
+    void Add(string key, string? val) { if (!string.IsNullOrWhiteSpace(val)) p.Add($"{key}={Uri.EscapeDataString(val)}"); }
+    Add("q", argv.Opt("grep") ?? argv.Opt("q"));
+    Add("subsystem", argv.Opt("subsystem"));
+    Add("kind", argv.Opt("kind"));
+    Add("team", argv.Opt("team"));
+    Add("level", argv.Opt("level"));
+    Add("template", argv.Opt("template"));
+    Add("route", argv.Opt("route"));
+    Add("status", argv.Opt("status"));
+    Add("metric", argv.Opt("metric"));
+    Add("service", argv.Opt("service"));
+    Add("minMs", argv.Opt("min-ms"));
+    Add("from", ResolveTime(argv.Opt("from")));
+    Add("to", ResolveTime(argv.Opt("to")));
+    Add("split", argv.Opt("split"));
+    Add("z", argv.Opt("z"));
+    Add("minPct", argv.Opt("min-pct"));
+    return "?" + string.Join("&", p);
+}
+
 // --- the board (the agent co-builds the wall of red string) ---------------
 void Board()
 {
@@ -282,34 +436,74 @@ void Board()
 
     var id = ResolveBoard(posIndex: 1);
     var b = api.Get<BoardDto>($"/api/boards/{id}");
+    if (sub == "review") { BoardReview(b); return; }
+
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
-    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Nodes.Count} services, {b.Edges.Count} edges)");
+    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Nodes.Count} service{(b.Nodes.Count == 1 ? "" : "s")}, {b.Edges.Count} edge{(b.Edges.Count == 1 ? "" : "s")})");
     Console.WriteLine($"open: {web}/view?board={b.Id}");
     Console.WriteLine("services:");
     foreach (var n in b.Nodes)
     {
         Console.WriteLine($"  {n.ServiceId,-20} {n.Label}");
         foreach (var ev in n.Evidence)
-            Console.WriteLine($"      · {ev.Kind,-8} {ev.Aspect}{(ev.Label is { } l ? "  " + l : "")}");
+            // lead with the evidence id — it's the handle `unpin` takes.
+            Console.WriteLine($"      {ev.Id}  {ev.Kind,-8} {ev.Aspect}"
+                + (string.IsNullOrWhiteSpace(ev.Summary) ? (ev.Label is { } l ? "  " + l : "") : "  " + ev.Summary));
     }
     if (b.Edges.Count > 0)
     {
         Console.WriteLine("red string:");
         foreach (var e in b.Edges)
-            Console.WriteLine($"  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]");
+            // lead with the edge id — the handle `crossout` / edge-delete take.
+            Console.WriteLine($"  {e.Id}  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]"
+                + (e.CrossedOut ? "  (cut)" : ""));
     }
-    Hint("weaver pin <service> --label \"...\"", "weaver link <a> <b> --as \"explains\"");
+    Hint("weaver pin <id|service>", "weaver link <a> <b> --as \"explains\"", "weaver board review   (do my strings hold up?)");
 }
 
-// Pin a SERVICE onto the board (the node). Optionally layer evidence with
-// --as <kind> --aspect <a>; without it, it's a bare service pin.
+// "challenge my wall" — for each red string, list the facts beneath it; flag any
+// with no recorded relationship as asserted-not-grounded. Enumerates only.
+void BoardReview(BoardDto b)
+{
+    var strings = b.Edges.Where(e => e.Kind is not ("dependency" or "route")).ToList();
+    if (strings.Count == 0) { Console.WriteLine("no red string on the board yet — nothing to review."); Hint("weaver link <a> <b> --as \"explains\""); return; }
+    Console.WriteLine($"reviewing {strings.Count} red string(s) — the facts under each (enumerated, never a verdict):");
+    foreach (var e in strings)
+    {
+        var tag = e.CrossedOut ? "  (cut)" : "";
+        Console.WriteLine($"\n  {e.Id}  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]{tag}");
+        var rels = api.Get<RelationshipsDto>($"/api/relationships?a={Uri.EscapeDataString(e.From)}&b={Uri.EscapeDataString(e.To)}").Relationships;
+        if (rels.Count == 0) { Console.WriteLine("      ⚠ no recorded relationship between these two — asserted, not grounded."); continue; }
+        foreach (var r in rels)
+            Console.WriteLine($"      · [{r.Group}] {r.From} -> {r.To}  {r.Title}");
+    }
+    Hint("weaver crossout <edge|a b>   (cut a string the facts don't support)");
+}
+
+// Pin a search result by its TYPED ID (an:/tr:/log:/me:/ce:/svc:) — resolves the
+// exact payload the UI would have pinned — OR a bare service + manual evidence
+// (--as <kind> --aspect <a>, with --note / --evidence / --at).
 void Pin()
 {
     var id = ResolveBoard();
-    var service = argv.Opt("ref") ?? (argv.Pos.Count > 0 ? argv.Pos[0] : "");
-    if (string.IsNullOrWhiteSpace(service)) { Console.Error.WriteLine("weaver: pin needs a <service>."); Environment.Exit(2); return; }
+    var arg = argv.Opt("ref") ?? (argv.Pos.Count > 0 ? argv.Pos[0] : "");
+    if (string.IsNullOrWhiteSpace(arg)) { Console.Error.WriteLine("weaver: pin needs a <typed-id> or <service>."); Environment.Exit(2); return; }
 
-    // evidence kind via --as (legacy --kind). none / "service" = a bare node pin.
+    // a typed search-result id → resolve it to the same pin target the UI uses.
+    if (IsTypedId(arg))
+    {
+        var r = api.Get<SearchResultDto>($"/api/search/resolve?id={Uri.EscapeDataString(arg)}");
+        api.Post<CreatedDto>($"/api/boards/{id}/pin",
+            new { serviceIds = r.Pin.NodeIds, evidence = r.Pin.Evidence, label = r.Title });
+        var where = r.Pin.NodeIds.Count > 1 ? $"{r.Pin.NodeIds.Count} services" : r.Pin.NodeIds.FirstOrDefault() ?? "(fleet)";
+        Console.WriteLine($"pinned {r.Type}: {r.Title}  → {where}");
+        Hint("weaver board show", "weaver link <a> <b> --as \"explains\"");
+        return;
+    }
+
+    // otherwise a bare service pin, optionally with manual evidence. soft-resolve
+    // so a typo'd real service is corrected but edge subjects still pin.
+    var service = ResolveService(arg, strict: false);
     var evKind = argv.Opt("as") ?? argv.Opt("kind");
     var hasEvidence = evKind is { } k0 && k0 is not ("service" or "node" or "note");
     object? evidence = null;
@@ -318,33 +512,76 @@ void Pin()
         object? payload =
             argv.Opt("evidence") is { } ev ? JsonSerializer.Deserialize<JsonElement>(ev) :
             argv.Opt("note") is { } note ? new { note } : null;
-        evidence = new { kind = evKind, aspect = argv.Opt("aspect") ?? "", at = argv.Opt("at"), payload };
+        evidence = new { kind = evKind, aspect = argv.Opt("aspect") ?? "", at = ResolveTime(argv.Opt("at")), payload };
     }
     api.Post<CreatedDto>($"/api/boards/{id}/pin",
         new { serviceIds = new[] { service }, evidence, label = argv.Opt("label") });
     Console.WriteLine(hasEvidence ? $"pinned {service}  (+{evKind})" : $"pinned {service}");
-    Hint("weaver pin <service> --as anomaly --aspect latency_p99", "weaver link <a> <b> --as \"explains\"");
+    Hint("weaver pin an:<service>:<metric>   (pin a search result by id)", "weaver search anomalies");
+}
+
+// a typed search-result id: known prefix + ':' (an:svc:metric, tr:…, log:…, me:…, ce:…, svc:…).
+static bool IsTypedId(string s)
+{
+    var c = s.IndexOf(':');
+    return c > 0 && s[..c] is "an" or "tr" or "log" or "me" or "ce" or "svc";
+}
+
+void Unpin()
+{
+    var id = ResolveBoard();
+    var what = argv.Need(0, "evidence-id or service");
+    if (argv.Has("all"))
+    {
+        api.Delete($"/api/boards/{id}/nodes/{Uri.EscapeDataString(what)}");
+        Console.WriteLine($"removed {what} (node + its evidence + its strings)");
+    }
+    else
+    {
+        api.Delete($"/api/boards/{id}/evidence/{Uri.EscapeDataString(what)}");
+        Console.WriteLine($"dropped evidence {what}");
+    }
+    Hint("weaver board show");
 }
 
 void Link()
 {
     var id = ResolveBoard();
-    var from = argv.Need(0, "from service");
-    var to = argv.Need(1, "to service");
-    api.Post<CreatedDto>($"/api/boards/{id}/edges",
+    // soft resolution: correct a real service typo, but let edge-subject ids
+    // (e.g. an anomaly pinned on an edge) pass through unchanged.
+    var from = ResolveService(argv.Need(0, "from service"), strict: false);
+    var to = ResolveService(argv.Need(1, "to service"), strict: false);
+    var c = api.Post<CreatedDto>($"/api/boards/{id}/edges",
         new { from, to, kind = argv.Opt("kind") ?? "causal", label = argv.Opt("as") ?? argv.Opt("label"), drawnBy = "agent" });
-    Console.WriteLine($"linked {from} -> {to}{(argv.Opt("as") is { } a ? $"  ({a})" : "")}");
-    Hint("weaver board show");
+    Console.WriteLine($"linked {from} -> {to}{(argv.Opt("as") is { } a ? $"  ({a})" : "")}   edge {c.Id}");
+    Hint($"weaver crossout {c.Id}   (cut it later)", "weaver board show");
 }
 
+// Cross out (or restore) a red string — by edge id, or by the service pair
+// (what a human actually says: "cut payments-db to checkout-api").
 void CrossOut()
 {
     var id = ResolveBoard();
-    var edge = argv.Need(0, "edge id");
     var restore = argv.Has("restore");
+    var edge = argv.Pos.Count >= 2 ? ResolveEdgeByPair(id, argv.Pos[0], argv.Pos[1]) : argv.Need(0, "edge id, or two services");
     api.Post<BoardEdgeDto>($"/api/boards/{id}/edges/{edge}/crossout", new { crossedOut = !restore });
     Console.WriteLine(restore ? $"restored {edge}" : $"crossed out {edge}");
     Hint("weaver board show");
+}
+
+// resolve the edge between two services on a board; if several, list them and bail.
+string ResolveEdgeByPair(string boardId, string a, string b)
+{
+    var edges = api.Get<BoardDto>($"/api/boards/{boardId}").Edges
+        .Where(e => (e.From == a && e.To == b) || (e.From == b && e.To == a)).ToList();
+    if (edges.Count == 0) { Console.Error.WriteLine($"weaver: no edge between {a} and {b}."); Environment.Exit(2); }
+    if (edges.Count > 1)
+    {
+        Console.Error.WriteLine($"weaver: {edges.Count} edges between {a} and {b} — pass an edge id:");
+        foreach (var e in edges) Console.Error.WriteLine($"  {e.Id}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")})");
+        Environment.Exit(2);
+    }
+    return edges[0].Id;
 }
 
 string ResolveBoard(int posIndex = -1)
@@ -356,10 +593,63 @@ string ResolveBoard(int posIndex = -1)
         Console.Error.WriteLine("weaver: no board. Run `weaver board new`, pass --board <id>, or set $WEAVER_BOARD.");
         Environment.Exit(2);
     }
-    return id!;
+    return BoardId(id!);
+}
+
+// Accept a pasted board URL anywhere a board id goes — the tired user pastes the
+// link in their address bar and it just works. `…/view?board=ab12cd34` -> ab12cd34.
+static string BoardId(string s)
+{
+    var m = System.Text.RegularExpressions.Regex.Match(s, @"[?&]board=([^&\s]+)");
+    return m.Success ? m.Groups[1].Value : s.Trim();
 }
 
 // --- shared helpers -------------------------------------------------------
+FacetsDto FacetsCached() => facetsCache ??= api.Get<FacetsDto>("/api/search/facets");
+GraphDto GraphCached() => graphCache ??= api.Get<GraphDto>("/api/graph");
+
+// Forgiving service id (did-you-mean): exact wins; else a unique case-insensitive,
+// prefix, or substring match auto-resolves with a note on stderr — so a rushed user
+// can type "payments" for payments-db. `strict` exits with nearby ids when nothing
+// resolves uniquely; soft (link) passes the token through (edge subjects aren't in
+// the graph). The graph is fetched once and cached.
+string ResolveService(string token, bool strict = true)
+{
+    var ids = GraphCached().Services.Select(s => s.Id).ToList();
+    if (ids.Contains(token)) return token;
+    List<string> Match(Func<string, bool> p) => ids.Where(p).ToList();
+    foreach (var hits in new[]
+    {
+        Match(s => string.Equals(s, token, StringComparison.OrdinalIgnoreCase)),
+        Match(s => s.StartsWith(token, StringComparison.OrdinalIgnoreCase)),
+        Match(s => s.Contains(token, StringComparison.OrdinalIgnoreCase)),
+    })
+    {
+        if (hits.Count == 1) { Console.Error.WriteLine($"weaver: read '{token}' as {hits[0]}"); return hits[0]; }
+        if (hits.Count > 1 && strict)
+        {
+            Console.Error.WriteLine($"weaver: '{token}' is ambiguous — did you mean: {string.Join(", ", hits.Take(6))}?");
+            Environment.Exit(2);
+        }
+    }
+    if (!strict) return token;
+    Console.Error.WriteLine($"weaver: no service matches '{token}'. try `weaver graph` for the list.");
+    Environment.Exit(2);
+    return token;
+}
+
+// Forgiving time: a full ISO/date passes through; a bare "14:30" / "14:30:00"
+// borrows the date from the dataset window, so a rushed user can type the clock
+// time they see on a chart. Returns null for empty input.
+string? ResolveTime(string? t)
+{
+    if (string.IsNullOrWhiteSpace(t)) return null;
+    t = t.Trim();
+    if (!System.Text.RegularExpressions.Regex.IsMatch(t, @"^\d{1,2}:\d{2}(:\d{2})?$")) return t;
+    var date = FacetsCached().Window.Start[..10];           // yyyy-MM-dd
+    return $"{date}T{(t.Count(c => c == ':') == 1 ? t + ":00" : t)}";
+}
+
 string AnalysisQuery(string path)
 {
     var parts = new List<string>();
@@ -464,6 +754,17 @@ sealed class Api
         if (resp.StatusCode == HttpStatusCode.NotFound) throw new ApiError(ErrText(LastRaw) ?? "not found");
         if (!resp.IsSuccessStatusCode) throw new ApiError($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {LastRaw}");
         return JsonSerializer.Deserialize<T>(LastRaw, J) ?? throw new ApiError("empty response");
+    }
+
+    public void Delete(string path)
+    {
+        HttpResponseMessage resp;
+        try { resp = http.DeleteAsync(path).GetAwaiter().GetResult(); }
+        catch (HttpRequestException) { throw new ApiError($"can't reach the API at {http.BaseAddress}. Is it running?"); }
+
+        LastRaw = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        if (resp.StatusCode == HttpStatusCode.NotFound) throw new ApiError(ErrText(LastRaw) ?? "not found");
+        if (!resp.IsSuccessStatusCode) throw new ApiError($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {LastRaw}");
     }
 
     static string? ErrText(string body)

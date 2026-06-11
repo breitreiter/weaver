@@ -79,8 +79,11 @@ agent-agnostic: **anything with a bash tool can drive it.**
 5. **Narrow or re-hypothesize.** Repeat 2–4 until one candidate explains
    the most observed symptom with the earliest onset.
 6. **Conclude** — rank the likeliest candidate, write the narrative.
-7. **Pin it** — create a View, get a URL. Clickable from the console,
-   pastable to Slack, storable in a ticket. The human adjudicates.
+7. **Build the wall** — `pin` the supporting findings (by typed id) and `link`
+   them into a red string on the shared board, then hand over its URL. Clickable
+   from the console, pastable to Slack, storable in a ticket; the human watches
+   it assemble live and adjudicates (and can `crossout` a string that doesn't
+   hold). See `sensemaking-pivot.md` / `cli-co-researcher.md`.
 
 ## How this shows up in the demo
 
