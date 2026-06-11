@@ -35,12 +35,15 @@ export interface Relationship {
 }
 export interface Relationships { a: string; b: string; relationships: Relationship[] }
 
-export interface BoardItem { id: string; kind: string; ref: string; evidence?: unknown; label?: string; x?: number; y?: number }
-export interface BoardEdge { id: string; fromItem: string; toItem: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean }
+// A board node is a service on the wall; evidence (anomaly/log/trace/metric/
+// change) layers onto it. Edges connect services. No "item" — service or evidence.
+export interface EvidenceItem { id: string; kind: string; aspect: string; at?: string | null; payload?: unknown; label?: string }
+export interface BoardNode { serviceId: string; label?: string; evidence: EvidenceItem[] }
+export interface BoardEdge { id: string; from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean }
 export interface LinkInput { from: string; to: string; kind?: string; label?: string; drawnBy?: string }
-export interface Board { id: string; title: string; createdAt: string; items: BoardItem[]; edges: BoardEdge[] }
+export interface Board { id: string; title: string; createdAt: string; nodes: BoardNode[]; edges: BoardEdge[] }
 export interface Created { id: string; url: string }
-export interface PinInput { kind: string; ref: string; label?: string; evidence?: unknown }
+export interface PinInput { serviceIds: string[]; evidence?: EvidenceRef | null; label?: string }
 
 // --- structured search (the left-panel query layer) ---------------------
 export interface Facets {
@@ -59,6 +62,8 @@ export type SearchParams = {
   subsystem?: string; kind?: string; team?: string
   level?: string; template?: string; route?: string; status?: string; minMs?: number
   metric?: string; split?: string; z?: number; minPct?: number; limit?: number
+  service?: string
+  from?: string; to?: string
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -106,11 +111,13 @@ export const api = {
 
   createBoard: (title?: string) => post<Created>('/boards', { title }),
   getBoard: (id: string) => get<Board>(`/boards/${id}`),
-  pin: (boardId: string, item: PinInput) => post<Created>(`/boards/${boardId}/items`, item),
+  pin: (boardId: string, item: PinInput) => post<Created>(`/boards/${boardId}/pin`, item),
   link: (boardId: string, edge: LinkInput) => post<Created>(`/boards/${boardId}/edges`, edge),
   crossOut: (boardId: string, edgeId: string, crossedOut: boolean) =>
     post<BoardEdge>(`/boards/${boardId}/edges/${edgeId}/crossout`, { crossedOut }),
   deleteEdge: (boardId: string, edgeId: string) => del<{ ok: boolean }>(`/boards/${boardId}/edges/${edgeId}`),
+  deleteEvidence: (boardId: string, evidenceId: string) => del<{ ok: boolean }>(`/boards/${boardId}/evidence/${evidenceId}`),
+  deleteNode: (boardId: string, serviceId: string) => del<{ ok: boolean }>(`/boards/${boardId}/nodes/${encodeURIComponent(serviceId)}`),
 
   facets: () => get<Facets>('/search/facets'),
   search: (p: SearchParams) => get<SearchResult[]>(`/search${qs({ ...p })}`),

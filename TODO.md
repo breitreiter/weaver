@@ -30,10 +30,11 @@ is co-built by human *and* Claude.
 - [ ] **Traces are a distinct, sparse, rich type** — not a node. A trace result is
       a span breakdown (where `self_ms` went), so it needs its own card shape.
       This whole result-typing problem "needs a lot of love."
-- [ ] **Board model refactor**: a pin = **node + layered evidence** (interest in
-      node x + time t + aspect e), not the v1 item-with-kind. Touches the backend
-      (BoardNode + Evidence), the pin verbs/UI, and the board render. Do it with
-      the rework. See `project/plans/sensemaking-pivot.md`.
+- [x] **Board model refactor**: a pin = **node + layered evidence** (interest in
+      node x + time t + aspect e), not the v1 item-with-kind. Done 2026-06-10 —
+      backend (`BoardNode` + `Evidence`, keyed by serviceId), `/pin` endpoint, CLI
+      (`pin <service> [--as K --aspect A]`), and both panels. "node" retired from
+      UI copy → "service". See `project/bugs/graph-evidence-ux.md` (#1/#2/#4).
 - [ ] **Build the search API** — facets / structured search / node-evidence
       endpoints, specced in `project/plans/search-api.md`. Query-layer only over
       the read-only telemetry; no schema change. Each search result carries its
@@ -73,6 +74,11 @@ changes** per-result-set, **anomalies** per-result-set (event lollipops),
       blocked on Figma. Unify selector grammar + log FTS + analysis verbs.
 - [ ] Board data model — drafted in the plan; confirm pinnable granularity +
       edge kinds (dependency vs red-string).
+- [ ] **Graph ontology locked** in `project/plans/graph-model.md` — 2 primitives
+      (service node / relationship edge), all data is trans-time evidence on one or
+      the other, traces are a path-lens, time selects+labels but never positions.
+      Open: edge-evidence schema (`BoardEdge`), trace render (decompose vs lens).
+      Read this before touching the graph/panel surface.
 
 ## Polish (after the view direction lands)
 

@@ -5,7 +5,7 @@ import {
   type Node, type Edge, type NodeProps, type Connection,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, type Board as BoardData, type BoardItem, type Relationship } from './api'
+import { api, type Board as BoardData, type Relationship } from './api'
 import { Icon } from './Icon'
 
 // The board (middle pane / wall of red string). React Flow: render the pinned
@@ -16,11 +16,13 @@ import { Icon } from './Icon'
 // See project/plans/board-build.md. Manual node placement is still deferred.
 //
 // Board data is fetched once in the Workbench and passed in, so the board and
-// evidence panels read one always-in-sync copy. We group items by `ref` (the
-// serviceId) → one node per service; evidence layers on as chips.
+// evidence panels read one always-in-sync copy. The server returns one node per
+// service, each carrying its layered evidence; chips summarize that evidence.
 
+// evidence kinds only — a node is a service (no 'node' kind). The chip says what
+// kind of finding is layered on the service.
 const KIND_ICON: Record<string, string> = {
-  node: 'deployed_code', anomaly: 'warning', log: 'description',
+  anomaly: 'warning', log: 'description',
   trace: 'account_tree', metric: 'monitoring', change: 'deployed_code_update',
 }
 
@@ -284,48 +286,30 @@ function RelationshipModal({ source, target, onDraw, onCancel }: {
 
 // --- graph construction ---------------------------------------------------
 
+type Link = { from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean; id: string }
+
 function buildGraph(board: BoardData): { nodes: EvidenceNode[]; edges: Edge[] } {
-  // group items by serviceId → one node per service, evidence layered as chips.
-  const byService = new Map<string, BoardItem[]>()
-  const itemToService = new Map<string, string>()
-  for (const it of board.items) {
-    const svc = it.ref || '(fleet)'
-    itemToService.set(it.id, svc)
-    ;(byService.get(svc) ?? byService.set(svc, []).get(svc)!).push(it)
-  }
+  const services = board.nodes.map(n => n.serviceId)
+  const present = new Set(services)
 
-  // an edge endpoint may be an item id (CLI `link`) or a service/node id
-  // (drawn in the UI). Resolve either onto a board node.
-  const resolve = (refId: string) => itemToService.get(refId) ?? (byService.has(refId) ? refId : undefined)
-
-  // collapse board edges onto service nodes, deduped by pair+kind (keep crossed-out).
+  // edges connect services directly; dedupe by pair+kind, drop any dangling end.
   const seen = new Set<string>()
-  type Link = { from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean; id: string }
   const links: Link[] = []
   for (const e of board.edges) {
-    const from = resolve(e.fromItem)
-    const to = resolve(e.toItem)
-    if (!from || !to || from === to) continue
-    const key = `${from}->${to}->${e.kind}`
+    if (!present.has(e.from) || !present.has(e.to) || e.from === e.to) continue
+    const key = `${e.from}->${e.to}->${e.kind}`
     if (seen.has(key)) continue
     seen.add(key)
-    links.push({ from, to, kind: e.kind, label: e.label, drawnBy: e.drawnBy, crossedOut: e.crossedOut, id: e.id })
+    links.push({ from: e.from, to: e.to, kind: e.kind, label: e.label, drawnBy: e.drawnBy, crossedOut: e.crossedOut, id: e.id })
   }
 
-  const services = [...byService.keys()]
   const pos = layout(services, links)
 
-  const nodes: EvidenceNode[] = services.map(svc => {
-    const items = byService.get(svc)!
+  const nodes: EvidenceNode[] = board.nodes.map(n => {
     const counts = new Map<string, number>()
-    let evidenceCount = 0
-    for (const it of items) {
-      if (it.kind === 'node') continue // a plain service pin — no evidence chip
-      counts.set(it.kind, (counts.get(it.kind) ?? 0) + 1)
-      evidenceCount++
-    }
+    for (const ev of n.evidence) counts.set(ev.kind, (counts.get(ev.kind) ?? 0) + 1)
     const chips = [...counts.entries()].map(([kind, count]) => ({ kind, count }))
-    return { id: svc, type: 'service', position: pos.get(svc)!, data: { service: svc, chips, evidenceCount } }
+    return { id: n.serviceId, type: 'service', position: pos.get(n.serviceId)!, data: { service: n.serviceId, chips, evidenceCount: n.evidence.length } }
   })
 
   const edges: Edge[] = links.map(l => {

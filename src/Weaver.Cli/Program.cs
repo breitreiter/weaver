@@ -62,8 +62,9 @@ void Help()
 
         build the wall (the board — co-built with the human)
           board new [title]             start a board; prints its id + URL
-          pin --kind K --ref R [...]    pin a finding (--label, --note, --evidence)
-          link <a> <b> --as "explains"  draw a red-string edge between two pins
+          pin <service> [--label L]     place a service on the board (a node)
+              [--as K --aspect A]         layer evidence onto it (--note, --evidence, --at)
+          link <a> <b> --as "explains"  draw a red-string edge between two services
           crossout <edge> [--restore]   cut a red string (kept, struck through)
           board show [id]               print the board
 
@@ -217,7 +218,7 @@ void Changes()
         if (c.Fields.ValueKind == JsonValueKind.Object && c.Fields.EnumerateObject().Any())
             Console.WriteLine($"  {"",-10} {"",-12} {"",-16} {string.Join("  ", c.Fields.EnumerateObject().Select(p => $"{p.Name}={p.Value}"))}");
     }
-    Hint("weaver pin --kind change --ref <service> --label \"...\"   (pin a deploy as evidence)");
+    Hint("weaver pin <service> --as change --aspect deploy --label \"...\"   (pin a deploy as evidence)");
 }
 
 void BlastRadius()
@@ -282,39 +283,54 @@ void Board()
     var id = ResolveBoard(posIndex: 1);
     var b = api.Get<BoardDto>($"/api/boards/{id}");
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
-    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Items.Count} pins, {b.Edges.Count} edges)");
+    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Nodes.Count} services, {b.Edges.Count} edges)");
     Console.WriteLine($"open: {web}/view?board={b.Id}");
-    Console.WriteLine("pins:");
-    foreach (var it in b.Items)
-        Console.WriteLine($"  {it.Id}  {it.Kind,-8} {it.Ref,-18} {it.Label}");
+    Console.WriteLine("services:");
+    foreach (var n in b.Nodes)
+    {
+        Console.WriteLine($"  {n.ServiceId,-20} {n.Label}");
+        foreach (var ev in n.Evidence)
+            Console.WriteLine($"      · {ev.Kind,-8} {ev.Aspect}{(ev.Label is { } l ? "  " + l : "")}");
+    }
     if (b.Edges.Count > 0)
     {
         Console.WriteLine("red string:");
         foreach (var e in b.Edges)
-            Console.WriteLine($"  {e.FromItem} -> {e.ToItem}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]");
+            Console.WriteLine($"  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]");
     }
-    Hint("weaver pin --kind K --ref R --label \"...\"", "weaver link <a> <b> --as \"explains\"");
+    Hint("weaver pin <service> --label \"...\"", "weaver link <a> <b> --as \"explains\"");
 }
 
+// Pin a SERVICE onto the board (the node). Optionally layer evidence with
+// --as <kind> --aspect <a>; without it, it's a bare service pin.
 void Pin()
 {
     var id = ResolveBoard();
-    var kind = argv.Opt("kind") ?? "note";
-    var refv = argv.Opt("ref") ?? (argv.Pos.Count > 0 ? argv.Pos[0] : "");
-    object? evidence =
-        argv.Opt("evidence") is { } ev ? JsonSerializer.Deserialize<JsonElement>(ev) :
-        argv.Opt("note") is { } note ? new { note } : null;
-    var c = api.Post<CreatedDto>($"/api/boards/{id}/items",
-        new { kind, @ref = refv, label = argv.Opt("label"), evidence });
-    Console.WriteLine($"pinned {c.Id}  ({kind} {refv})");
-    Hint("weaver link <a> <b> --as \"explains\"", "weaver board show");
+    var service = argv.Opt("ref") ?? (argv.Pos.Count > 0 ? argv.Pos[0] : "");
+    if (string.IsNullOrWhiteSpace(service)) { Console.Error.WriteLine("weaver: pin needs a <service>."); Environment.Exit(2); return; }
+
+    // evidence kind via --as (legacy --kind). none / "service" = a bare node pin.
+    var evKind = argv.Opt("as") ?? argv.Opt("kind");
+    var hasEvidence = evKind is { } k0 && k0 is not ("service" or "node" or "note");
+    object? evidence = null;
+    if (hasEvidence)
+    {
+        object? payload =
+            argv.Opt("evidence") is { } ev ? JsonSerializer.Deserialize<JsonElement>(ev) :
+            argv.Opt("note") is { } note ? new { note } : null;
+        evidence = new { kind = evKind, aspect = argv.Opt("aspect") ?? "", at = argv.Opt("at"), payload };
+    }
+    api.Post<CreatedDto>($"/api/boards/{id}/pin",
+        new { serviceIds = new[] { service }, evidence, label = argv.Opt("label") });
+    Console.WriteLine(hasEvidence ? $"pinned {service}  (+{evKind})" : $"pinned {service}");
+    Hint("weaver pin <service> --as anomaly --aspect latency_p99", "weaver link <a> <b> --as \"explains\"");
 }
 
 void Link()
 {
     var id = ResolveBoard();
-    var from = argv.Need(0, "from item id");
-    var to = argv.Need(1, "to item id");
+    var from = argv.Need(0, "from service");
+    var to = argv.Need(1, "to service");
     api.Post<CreatedDto>($"/api/boards/{id}/edges",
         new { from, to, kind = argv.Opt("kind") ?? "causal", label = argv.Opt("as") ?? argv.Opt("label"), drawnBy = "agent" });
     Console.WriteLine($"linked {from} -> {to}{(argv.Opt("as") is { } a ? $"  ({a})" : "")}");

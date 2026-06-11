@@ -104,10 +104,15 @@ evidence attached to nodes.
   causal/temporal are the operator's red string.
 - Every node is self-justifying via its evidence (every pixel accountable).
 
-> **Note:** the shipped v1 backend models a pin as `BoardItem{kind, ref,
-> evidence}` (kind conflated onto the item). The rework splits that into
-> **BoardNode + layered Evidence** per the above — done together with the
-> left-panel v2 and the board render.
+> **Done (2026-06-10).** The v1 `BoardItem{kind, ref, evidence}` (kind conflated
+> onto the item) is gone — split into **`BoardNode{serviceId,label}` + layered
+> `Evidence{kind,aspect,at,payload}`** per the above. Nodes are keyed by serviceId
+> (node ↔ service 1:1), so edges connect services directly and `kind` now means an
+> evidence kind only — never "node". Pin ensures a node per service + layers
+> evidence on the subject; the `/pin` endpoint, CLI (`pin <service> [--as K
+> --aspect A]`), and both panels all speak service+evidence. "node" is retired
+> from all UI copy → "service". (Left-panel v2 and the board render still build on
+> this; the model itself is settled.)
 
 ### Board interactions
 

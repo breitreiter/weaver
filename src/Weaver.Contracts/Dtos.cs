@@ -102,14 +102,18 @@ public record RelationshipsDto(string A, string B, IReadOnlyList<RelationshipDto
 
 // --- the board (sensemaking; co-built by human + agent) ------------------
 
-public record BoardItemDto(string Id, string Kind, string Ref, JsonElement? Evidence, string? Label, double? X, double? Y);
-public record BoardEdgeDto(string Id, string FromItem, string ToItem, string Kind, string? Label, string DrawnBy, bool CrossedOut);
+// A board node is a service placed on the wall, carrying its layered evidence.
+public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At, JsonElement? Payload, string? Label);
+public record BoardNodeDto(string ServiceId, string? Label, IReadOnlyList<EvidenceItemDto> Evidence);
+public record BoardEdgeDto(string Id, string From, string To, string Kind, string? Label, string DrawnBy, bool CrossedOut);
 public record BoardDto(string Id, string Title, string CreatedAt,
-    IReadOnlyList<BoardItemDto> Items, IReadOnlyList<BoardEdgeDto> Edges);
+    IReadOnlyList<BoardNodeDto> Nodes, IReadOnlyList<BoardEdgeDto> Edges);
 
 // request bodies
 public record CreateBoardReq(string? Title);
-public record PinReq(string Kind, string Ref, JsonElement? Evidence, string? Label, double? X, double? Y);
+// pin = ensure a node per service + (optionally) layer one piece of evidence onto
+// the first. ServiceIds carries multiple for a trace (its participant services).
+public record PinReq(IReadOnlyList<string> ServiceIds, EvidenceRefDto? Evidence, string? Label);
 public record LinkReq(string From, string To, string? Kind, string? Label, string? DrawnBy);
 public record CrossOutReq(bool CrossedOut);
 public record CreatedDto(string Id, string Url);

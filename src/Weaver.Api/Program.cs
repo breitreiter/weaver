@@ -172,22 +172,47 @@ app.MapGet("/api/boards/{id}", (BoardsDbContext db, string id) =>
 {
     var b = db.Boards.AsNoTracking().FirstOrDefault(x => x.Id == id);
     if (b is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
-    var items = db.BoardItems.AsNoTracking().Where(i => i.BoardId == id).OrderBy(i => i.CreatedAt).ToList().Select(ToBoardItemDto).ToList();
+    var nodes = db.BoardNodes.AsNoTracking().Where(n => n.BoardId == id).OrderBy(n => n.CreatedAt).ToList();
+    var evidence = db.Evidence.AsNoTracking().Where(e => e.BoardId == id).OrderBy(e => e.CreatedAt).ToList()
+        .ToLookup(e => e.ServiceId);
+    var nodeDtos = nodes.Select(n => new BoardNodeDto(
+        n.ServiceId, n.Label, evidence[n.ServiceId].Select(ToEvidenceDto).ToList())).ToList();
     var edges = db.BoardEdges.AsNoTracking().Where(e => e.BoardId == id).OrderBy(e => e.CreatedAt).ToList().Select(ToBoardEdgeDto).ToList();
-    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, items, edges));
+    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, nodeDtos, edges));
 });
 
-app.MapPost("/api/boards/{id}/items", (BoardsDbContext db, string id, PinReq req) =>
+// Pin = ensure a node per service (idempotent — a service already on the board is
+// reused, not duplicated), then layer the evidence (if any) onto the first. A
+// trace passes its participant services; they all land, evidence on the subject.
+app.MapPost("/api/boards/{id}/pin", (BoardsDbContext db, string id, PinReq req) =>
 {
     if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
-    var item = new BoardItemEntity
+    var services = (req.ServiceIds ?? []).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().ToList();
+    if (services.Count == 0) services.Add("(fleet)");
+
+    // the label describes the subject's finding, so only the subject (first service)
+    // carries it; trace participants are ensured as bare nodes.
+    foreach (var svc in services)
     {
-        Id = NewId(), BoardId = id, Kind = req.Kind, Ref = req.Ref,
-        Evidence = req.Evidence?.GetRawText() ?? "{}", Label = req.Label, X = req.X, Y = req.Y, CreatedAt = NowIso(),
-    };
-    db.BoardItems.Add(item);
+        if (!db.BoardNodes.Any(n => n.BoardId == id && n.ServiceId == svc))
+            db.BoardNodes.Add(new BoardNodeEntity
+            {
+                Id = NewId(), BoardId = id, ServiceId = svc,
+                Label = svc == services[0] ? req.Label : null, CreatedAt = NowIso(),
+            });
+    }
+    if (req.Evidence is { } ev)
+    {
+        db.Evidence.Add(new EvidenceEntity
+        {
+            Id = NewId(), BoardId = id, ServiceId = services[0],
+            Kind = ev.Kind, Aspect = ev.Aspect, At = ev.At,
+            Payload = ev.Payload is null ? "{}" : JsonSerializer.Serialize(ev.Payload),
+            Label = req.Label, CreatedAt = NowIso(),
+        });
+    }
     db.SaveChanges();
-    return Results.Ok(new CreatedDto(item.Id, $"/view?board={id}"));
+    return Results.Ok(new CreatedDto(services[0], $"/view?board={id}"));
 });
 
 app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq req) =>
@@ -195,7 +220,7 @@ app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq re
     if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
     var edge = new BoardEdgeEntity
     {
-        Id = NewId(), BoardId = id, FromItem = req.From, ToItem = req.To,
+        Id = NewId(), BoardId = id, FromService = req.From, ToService = req.To,
         Kind = req.Kind ?? "causal", Label = req.Label, DrawnBy = req.DrawnBy ?? "agent", CreatedAt = NowIso(),
     };
     db.BoardEdges.Add(edge);
@@ -224,6 +249,32 @@ app.MapDelete("/api/boards/{id}/edges/{edgeId}", (BoardsDbContext db, string id,
     return Results.Ok(new { ok = true });
 });
 
+// Take a single finding off the wall. Unlike the edge crossout (which is kept,
+// struck through), a mis-pinned piece of evidence is just removed — it never
+// carried reasoning, only an observation.
+app.MapDelete("/api/boards/{id}/evidence/{evidenceId}", (BoardsDbContext db, string id, string evidenceId) =>
+{
+    var ev = db.Evidence.FirstOrDefault(e => e.BoardId == id && e.Id == evidenceId);
+    if (ev is null) return Results.NotFound(new { error = $"unknown evidence '{evidenceId}'" });
+    db.Evidence.Remove(ev);
+    db.SaveChanges();
+    return Results.Ok(new { ok = true });
+});
+
+// Remove a whole service from the board: its node, every piece of evidence layered
+// on it, and any red string touching it. No FK cascade is configured, so each
+// table is cleared explicitly.
+app.MapDelete("/api/boards/{id}/nodes/{serviceId}", (BoardsDbContext db, string id, string serviceId) =>
+{
+    var node = db.BoardNodes.FirstOrDefault(n => n.BoardId == id && n.ServiceId == serviceId);
+    if (node is null) return Results.NotFound(new { error = $"unknown node '{serviceId}'" });
+    db.BoardNodes.Remove(node);
+    db.Evidence.RemoveRange(db.Evidence.Where(e => e.BoardId == id && e.ServiceId == serviceId));
+    db.BoardEdges.RemoveRange(db.BoardEdges.Where(e => e.BoardId == id && (e.FromService == serviceId || e.ToService == serviceId)));
+    db.SaveChanges();
+    return Results.Ok(new { ok = true });
+});
+
 // --- change events (deploys/config/flags); tolerant if not generated yet --
 app.MapGet("/api/change-events", (WeaverDbContext db, string? from, string? to, string? target) =>
     ChangeEvents(db, from, to, target));
@@ -245,7 +296,8 @@ app.MapGet("/api/search/facets", (WeaverDbContext db) => new FacetsDto(
 app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
     string? subsystem, string? kind, string? team,
     string? level, string? template, string? route, string? status, int? minMs,
-    string? metric, string? from, string? to, string? split, double? z, double? minPct, int? limit) =>
+    string? metric, string? from, string? to, string? split, double? z, double? minPct, int? limit,
+    string? service) =>
 {
     var lim = limit ?? 50;
     scope ??= "services";
@@ -269,6 +321,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (subsystem is not null) sq = sq.Where(s => s.Subsystem == subsystem);
             if (kind is not null) sq = sq.Where(s => s.Kind == kind);
             if (team is not null) sq = sq.Where(s => s.OwnerTeam == team);
+            if (service is not null) sq = sq.Where(s => s.Id == service);
             if (!string.IsNullOrWhiteSpace(q)) sq = sq.Where(s => s.Id.Contains(q!) || s.Name.Contains(q!));
             var rows = sq.OrderBy(s => s.Id).Take(lim).ToList();
             return Results.Ok(rows.Select(s => new SearchResultDto(
@@ -279,7 +332,8 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
         {
             var (series, at) = LoadSeries(db, split);
             var rows = Analysis.Anomalies(series, at, z ?? 3.0, minPct ?? 15.0)
-                .Where(a => a.SubjectKind != "service" || pass(a.SubjectId)).Take(lim).ToList();
+                .Where(a => a.SubjectKind != "service" || pass(a.SubjectId))
+                .Where(a => service is null || a.SubjectId == service).Take(lim).ToList();
             return Results.Ok(rows.Select(a => new SearchResultDto(
                 "anomaly", $"an:{a.SubjectId}:{a.Metric}",
                 $"{a.SubjectId}  {a.Metric}  {(a.DeltaPct > 0 ? "+" : "")}{a.DeltaPct}%",
@@ -294,6 +348,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
                     SELECT le.* FROM log_events le
                     JOIN log_events_fts f ON le.rowid = f.rowid
                     WHERE log_events_fts MATCH {q}");
+            if (service is not null) lq = lq.Where(l => l.ServiceId == service);
             if (level is not null) lq = lq.Where(l => l.Level == level);
             if (template is not null) lq = lq.Where(l => l.TemplateId == template);
             if (from is not null) lq = lq.Where(l => string.Compare(l.Ts, from) >= 0);
@@ -309,6 +364,11 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (route is not null) tq = tq.Where(t => t.RequestTypeId == route);
             if (status is not null) tq = tq.Where(t => t.Status == status);
             if (minMs is not null) tq = tq.Where(t => t.DurationMs >= minMs);
+            if (from is not null) tq = tq.Where(t => string.Compare(t.StartedAt, from) >= 0);
+            if (to is not null) tq = tq.Where(t => string.Compare(t.StartedAt, to) <= 0);
+            // a trace "belongs to" a service if any of its spans touch that service —
+            // this is how the traces button pulls in NODES adjacent to the one on the board.
+            if (service is not null) tq = tq.Where(t => db.Spans.Any(s => s.TraceId == t.Id && s.ServiceId == service));
             var rows = tq.OrderByDescending(t => t.DurationMs).Take(lim).ToList();
             return Results.Ok(rows.Select(t =>
             {
@@ -325,22 +385,28 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
         }
         case "metrics":
         {
-            var m = metric ?? "latency_p99";
             var (series, _) = LoadSeries(db, split);
-            var rows = series.Where(s => s.Kind == "service" && s.Metric == m && pass(s.Id)).Take(lim).ToList();
+            var sel = series.Where(s => s.Kind == "service" && pass(s.Id));
+            if (service is not null) sel = sel.Where(s => s.Id == service);
+            // scoped to one service → list ALL its metric series; browsing across
+            // services → pick one metric (the facet, default latency_p99).
+            if (metric is not null) sel = sel.Where(s => s.Metric == metric);
+            else if (service is null) sel = sel.Where(s => s.Metric == "latency_p99");
+            var rows = sel.OrderBy(s => s.Id).ThenBy(s => s.Metric).Take(lim).ToList();
             return Results.Ok(rows.Select(s =>
             {
-                var tr = Trajectory.Encode(s.Points.Select(p => p.Val).ToList(), MinutesOf(s.Points), UnitFor(m));
+                var tr = Trajectory.Encode(s.Points.Select(p => p.Val).ToList(), MinutesOf(s.Points), UnitFor(s.Metric));
                 return new SearchResultDto(
-                    "metric", $"me:{s.Id}:{m}", $"{s.Id}  {m}", tr.ShapeCode,
+                    "metric", $"me:{s.Id}:{s.Metric}", $"{s.Id}  {s.Metric}", tr.ShapeCode,
                     new { tr.ShapeCode, tr.Prose, tr.Min, tr.Max, tr.Mean },
-                    new PinTargetDto([s.Id], new EvidenceRefDto("metric", m, null, new { tr.ShapeCode, tr.Prose })));
+                    new PinTargetDto([s.Id], new EvidenceRefDto("metric", s.Metric, null, new { tr.ShapeCode, tr.Prose })));
             }).ToList());
         }
         case "changes":
         {
             var rows = ChangeEvents(db, from, to, null)
-                .Where(c => c.TargetId is null || pass(c.TargetId)).Take(lim).ToList();
+                .Where(c => c.TargetId is null || pass(c.TargetId))
+                .Where(c => service is null || c.TargetId == service).Take(lim).ToList();
             return Results.Ok(rows.Select(c => new SearchResultDto(
                 "change", "ce:" + c.Id, c.Summary,
                 $"{c.Kind} · {c.Ts}" + (c.TargetId is not null ? " · " + c.TargetId : " · fleet-wide"), c,
@@ -525,10 +591,10 @@ static (List<Analysis.SeriesInput> series, DateTimeOffset split) LoadSeries(Weav
     return (series, at);
 }
 
-static BoardItemDto ToBoardItemDto(BoardItemEntity i) =>
-    new(i.Id, i.Kind, i.Ref, ParseJson(i.Evidence), i.Label, i.X, i.Y);
+static EvidenceItemDto ToEvidenceDto(EvidenceEntity e) =>
+    new(e.Id, e.Kind, e.Aspect, e.At, ParseJson(e.Payload), e.Label);
 static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
-    new(e.Id, e.FromItem, e.ToItem, e.Kind, e.Label, e.DrawnBy, e.CrossedOut);
+    new(e.Id, e.FromService, e.ToService, e.Kind, e.Label, e.DrawnBy, e.CrossedOut);
 static string NewId() => Guid.NewGuid().ToString("N")[..8];
 static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 
@@ -577,19 +643,26 @@ static List<RelationshipDto> RelationshipsBetween(WeaverDbContext db, string a, 
             new { d.Id, d.Kind, d.Critical }));
     }
 
-    // 2. shared request-type paths — both services sit on the same route; the
-    // path order gives the direction (upstream → downstream).
-    foreach (var r in db.RequestTypes.ToList())
+    // 2. shared request-type paths — both services sit on the same route. Collapse
+    // every shared route into ONE relationship (two hub services co-occur on many
+    // routes; a row each is noise). Direction follows the path order, taken from the
+    // majority of shared routes.
+    var shared = db.RequestTypes.ToList()
+        .Select(r => new { r, path = JsonSerializer.Deserialize<string[]>(r.Path) ?? [] })
+        .Select(x => new { x.r, ia = Array.IndexOf(x.path, a), ib = Array.IndexOf(x.path, b), hops = x.path.Length })
+        .Where(x => x.ia >= 0 && x.ib >= 0)
+        .ToList();
+    if (shared.Count > 0)
     {
-        var path = JsonSerializer.Deserialize<string[]>(r.Path) ?? [];
-        int ia = Array.IndexOf(path, a), ib = Array.IndexOf(path, b);
-        if (ia < 0 || ib < 0) continue;
-        var (from, to) = ia <= ib ? (a, b) : (b, a);
+        var aBefore = shared.Count(x => x.ia <= x.ib);
+        var (from, to) = aBefore * 2 >= shared.Count ? (a, b) : (b, a);
+        var names = shared.Select(x => x.r.Name).ToList();
+        var preview = string.Join(", ", names.Take(3)) + (names.Count > 3 ? $", +{names.Count - 3} more" : "");
         rels.Add(new RelationshipDto("route", from, to, "route",
-            $"on route {r.Name}",
-            $"{from} precedes {to} on {r.Name} ({path.Length} hops)",
-            $"co-located on {r.Name}",
-            new { route = r.Id, r.Name, hops = path.Length }));
+            shared.Count == 1 ? $"on route {names[0]}" : $"on {shared.Count} shared routes",
+            $"{from} precedes {to} on {preview}",
+            shared.Count == 1 ? $"co-located on {names[0]}" : $"shares {shared.Count} routes",
+            new { count = shared.Count, routes = shared.Select(x => new { x.r.Id, x.r.Name, x.hops }) }));
     }
 
     // 3. temporal precedence — both moved; order by anomaly onset. Reading

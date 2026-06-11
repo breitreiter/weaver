@@ -38,11 +38,11 @@ const SORT_BY: Record<string, string> = {
 // which facet controls each scope shows
 const CONTROLS: Record<string, string[]> = {
   anomalies: ['z', 'subsystem', 'kind'],
-  traces: ['route', 'status'],
-  logs: ['q', 'level', 'template', 'subsystem'],
+  traces: ['route', 'status', 'time'],
+  logs: ['q', 'level', 'template', 'subsystem', 'time'],
   services: ['q', 'subsystem', 'kind', 'team'],
   metrics: ['metric', 'subsystem'],
-  changes: ['subsystem', 'kind'],
+  changes: ['subsystem', 'kind', 'time'],
 }
 
 export default function Workbench() {
@@ -84,8 +84,13 @@ export default function Workbench() {
     try {
       const p: SearchParams = { scope, limit: RESULT_LIMIT }
       if (q.trim()) p.q = q.trim()
+      if (f.service) p.service = f.service
       for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric'])
         if (f[k]) (p as Record<string, unknown>)[k] = f[k]
+      // datetime-local emits "YYYY-MM-DDTHH:mm" — pad seconds so the range is
+      // inclusive of the whole boundary minute (backend compares ISO strings).
+      if (f.from) p.from = f.from + ':00'
+      if (f.to) p.to = f.to + ':59'
       p.z = f.z ? Number(f.z) : scope === 'anomalies' ? 3 : undefined
       setResults(await api.search(p))
     } catch (e) { setErr(String(e)); setResults([]) }
@@ -106,13 +111,36 @@ export default function Workbench() {
   async function pin(r: SearchResult) {
     if (pinned.has(r.id)) return
     const id = await ensureBoard()
-    const ev = r.pin.evidence
-    await api.pin(id, { kind: ev?.kind ?? 'node', ref: r.pin.nodeIds[0] ?? '(fleet)', label: r.title, evidence: ev?.payload })
+    // serviceIds may carry several (a trace's participants); the API ensures a node
+    // for each and layers the evidence onto the subject. See board-build.md.
+    await api.pin(id, { serviceIds: r.pin.nodeIds, evidence: r.pin.evidence, label: r.title })
     setPinned(prev => new Set(prev).add(r.id))
     setPinCount(c => c + 1)
   }
 
   const setField = (k: string, v: string) => setF(prev => ({ ...prev, [k]: v }))
+
+  // explore button on a board/evidence card → reset the left panel to a fresh
+  // single-service query in the chosen scope (clears free text + every other
+  // facet), so the operator can span out from a pinned node without touching the
+  // graph. service rides as a facet, so it persists if they then switch scopes.
+  const exploreService = (nextScope: string, svc: string, extra?: Record<string, string>) => {
+    setQ(''); setF({ service: svc, ...extra }); setScope(nextScope)
+  }
+
+  // board trash icons: drop a single piece of evidence, or a whole service (its
+  // node + all its evidence + any red string touching it). Reload so both panels
+  // reflect the removal on the next frame rather than the poll.
+  async function removeEvidence(evidenceId: string) {
+    if (!boardId) return
+    await api.deleteEvidence(boardId, evidenceId)
+    reloadBoard()
+  }
+  async function removeService(svc: string) {
+    if (!boardId) return
+    await api.deleteNode(boardId, svc)
+    reloadBoard()
+  }
   const controls = CONTROLS[scope] ?? []
   const opts = (k: string): string[] => {
     if (!facets) return []
@@ -163,7 +191,36 @@ export default function Workbench() {
               </select>
             </label>
           ))}
+          {controls.includes('time') && facets && (
+            <>
+              <label>from
+                <input type="datetime-local" className="time-input" value={f.from ?? ''}
+                  min={facets.window.start.slice(0, 16)} max={facets.window.end.slice(0, 16)}
+                  onChange={e => setField('from', e.target.value)} />
+              </label>
+              <label>to
+                <input type="datetime-local" className="time-input" value={f.to ?? ''}
+                  min={facets.window.start.slice(0, 16)} max={facets.window.end.slice(0, 16)}
+                  onChange={e => setField('to', e.target.value)} />
+              </label>
+              {(f.from || f.to) && (
+                <button type="button" className="time-clear" title="clear time range"
+                  onClick={() => setF(prev => ({ ...prev, from: '', to: '' }))}>
+                  <Icon name="close" size={14} /> clear
+                </button>
+              )}
+            </>
+          )}
         </div>
+
+        {f.service && (
+          <div className="active-filter">
+            <Icon name="filter_alt" size={14} />
+            <span>scoped to <span className="mono">{f.service}</span></span>
+            <button className="active-filter-clear" onClick={() => setField('service', '')}
+              title="clear service scope"><Icon name="close" size={14} /></button>
+          </div>
+        )}
 
         <div className="results">
           {running && <div className="hint">searching…</div>}
@@ -189,7 +246,8 @@ export default function Workbench() {
             </div>}
       </div>
 
-      <Evidence board={board} focus={focus} onFocus={setFocus} />
+      <Evidence board={board} focus={focus} onFocus={setFocus} onExplore={exploreService}
+        onDeleteEvidence={removeEvidence} onDeleteService={removeService} />
     </div>
   )
 }

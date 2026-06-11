@@ -28,7 +28,15 @@ Implementation: dagre / elkjs (standard React Flow auto-layout companions —
 layered, not force) or a hand-rolled layered pass (viable at curated-board node
 counts).
 
-## Prerequisite — board model refactor (backend, NOT Figma-blocked)
+## Prerequisite — board model refactor (backend, NOT Figma-blocked) — DONE 2026-06-10
+
+✅ The v1 `BoardItem{kind, ref, evidence}` conflation is gone — store, API, CLI,
+and both panels now run the node+evidence model below (nodes keyed by serviceId;
+edges connect services; `kind` = evidence kind only; "node" retired from UI copy).
+What shipped vs. the original sketch: positions are *not* stored (layout computed,
+as planned); a pinned trace ensures all participant nodes with evidence on the
+subject; node/evidence `DELETE` endpoints were deferred (no UI consumes them yet).
+Original spec retained below for reference.
 
 The v1 store conflates a pin as `BoardItem{kind, ref, evidence}`. Refactor to the
 node+evidence model (`sensemaking-pivot.md`):
