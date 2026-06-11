@@ -331,9 +331,17 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
         case "anomalies":
         {
             var (series, at) = LoadSeries(db, split);
+            // Anomalies carry an OnsetTs, so the window filters on *when the anomaly
+            // began* — the analog of logs/traces filtering on their own timestamp.
+            // Compared as parsed instants: OnsetTs is second-precision (Iso) while
+            // from/to arrive at ms-precision, so a raw string compare would be off
+            // at second boundaries.
+            var fromT = from is null ? (DateTimeOffset?)null : ParseUtc(from);
+            var toT = to is null ? (DateTimeOffset?)null : ParseUtc(to);
             var rows = Analysis.Anomalies(series, at, z ?? 3.0, minPct ?? 15.0)
                 .Where(a => a.SubjectKind != "service" || pass(a.SubjectId))
-                .Where(a => service is null || a.SubjectId == service).Take(lim).ToList();
+                .Where(a => service is null || a.SubjectId == service)
+                .Where(a => OnsetInWindow(a.OnsetTs, fromT, toT)).Take(lim).ToList();
             return Results.Ok(rows.Select(a => new SearchResultDto(
                 "anomaly", $"an:{a.SubjectId}:{a.Metric}",
                 $"{a.SubjectId}  {a.Metric}  {(a.DeltaPct > 0 ? "+" : "")}{a.DeltaPct}%",
@@ -568,6 +576,21 @@ static SpanDto ToSpanDto(SpanEntity s) =>
     new(s.Id, s.ParentSpanId, s.ServiceId, s.EdgeId, s.Kind, s.StartOffsetMs, s.DurationMs, s.SelfMs, s.Status, ParseJson(s.Attributes));
 static JsonElement ParseJson(string s) =>
     JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(s) ? "{}" : s);
+
+// The search window arrives timezone-naive from the picker (the UTC wall-clock
+// the facet bounds are drawn from), so read it as UTC rather than server-local.
+static DateTimeOffset ParseUtc(string s) => DateTimeOffset.Parse(
+    s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+
+// Does an anomaly's onset fall in [from, to]? No bounds → everything passes.
+// A bounded window can't place an onset-less anomaly, so those drop out.
+static bool OnsetInWindow(string? onset, DateTimeOffset? from, DateTimeOffset? to)
+{
+    if (from is null && to is null) return true;
+    if (onset is null) return false;
+    var t = ParseUtc(onset);
+    return (from is null || t >= from) && (to is null || t <= to);
+}
 
 // Load every metric series, plus the comparison split (default: 30% into the
 // observed window). The whole dataset is small enough to group in memory.

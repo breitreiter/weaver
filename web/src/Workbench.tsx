@@ -37,7 +37,7 @@ const SORT_BY: Record<string, string> = {
 
 // which facet controls each scope shows
 const CONTROLS: Record<string, string[]> = {
-  anomalies: ['z', 'subsystem', 'kind'],
+  anomalies: ['z', 'subsystem', 'kind', 'time'],
   traces: ['route', 'status', 'time'],
   logs: ['q', 'level', 'template', 'subsystem', 'time'],
   services: ['q', 'subsystem', 'kind', 'team'],
@@ -64,8 +64,16 @@ export default function Workbench() {
   const [board, setBoard] = useState<BoardData | null>(null)
   const reloadBoard = useCallback(async () => {
     if (!boardId) { setBoard(null); return }
-    try { setBoard(await api.getBoard(boardId)) } catch { /* keep last good copy */ }
-  }, [boardId])
+    try { setBoard(await api.getBoard(boardId)) }
+    catch (e) {
+      // a 404 means the board is gone (e.g. DB reseeded) — drop the stale
+      // param so we stop polling a dead id. other errors keep the last copy.
+      if (String(e).includes('404')) {
+        setBoard(null)
+        setParams(prev => { const next = new URLSearchParams(prev); next.delete('board'); return next })
+      }
+    }
+  }, [boardId, setParams])
   // eslint-disable-next-line react-hooks/set-state-in-effect -- polls an external system; setState lands async after the fetch
   useEffect(() => {
     reloadBoard()
@@ -193,6 +201,7 @@ export default function Workbench() {
           ))}
           {controls.includes('time') && facets && (
             <>
+              <span className="time-tz" title="all times shown and filtered in UTC">UTC</span>
               <label>from
                 <input type="datetime-local" className="time-input" value={f.from ?? ''}
                   min={facets.window.start.slice(0, 16)} max={facets.window.end.slice(0, 16)}
@@ -252,8 +261,20 @@ export default function Workbench() {
   )
 }
 
+// trace timestamps are stored UTC (…Z) and the time filters above are timezone-
+// naive over that same UTC window, so render in UTC to keep cards and the picker
+// in one frame of reference. Returns "YYYY-MM-DD HH:mm:ss" — directly readable
+// into the from/to controls.
+function fmtTime(iso?: string): string {
+  if (!iso) return ''
+  const t = Date.parse(iso.endsWith('Z') ? iso : iso + 'Z')
+  if (Number.isNaN(t)) return ''
+  return new Date(t).toISOString().slice(0, 19).replace('T', ' ')
+}
+
 function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; onPin: () => void }) {
   const dir = r.type === 'anomaly' ? r.payload?.direction : undefined
+  const startedAt = r.type === 'trace' ? fmtTime(r.payload?.trace?.startedAt) : ''
   return (
     <div className={'card' + (dir ? ` dir-${dir}` : '')}>
       <div className="card-head">
@@ -266,7 +287,10 @@ function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; on
           <Icon name="graph_3" size={18} />
         </button>
       </div>
-      <div className="card-sub">{r.subtitle}</div>
+      <div className="card-sub">
+        {startedAt && <span className="card-time mono" title="trace start (UTC)">{startedAt}</span>}
+        {r.subtitle}
+      </div>
       {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} />}
     </div>
   )
