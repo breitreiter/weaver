@@ -95,6 +95,8 @@
 .trace-mini { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .hop { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .hop-svc { color: var(--text); width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.hop-svc { background: none; border: 0; padding: 0; text-align: left; font-size: inherit; cursor: pointer; }
+button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .hop-bar { height: 8px; background: var(--accent); border-radius: 2px; min-width: 2px; }
 .hop-ms { color: var(--text-dim); }
 
@@ -238,6 +240,8 @@
   overflow-wrap: anywhere; }
 .ev-item-search { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .ev-item-trash { align-self: flex-start; }
+/* metric sparkline — fills the card width, short fixed height, kind colour via --k */
+.ev-spark { display: block; width: 100%; height: 28px; margin-top: 6px; opacity: .85; }
 
 .ev-strings { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border);
   display: flex; flex-direction: column; gap: 4px; }

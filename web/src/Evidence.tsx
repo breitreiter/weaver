@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { type Board as BoardData, type EvidenceItem, type BoardEdge } from './api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { api, type Board as BoardData, type EvidenceItem, type BoardEdge, type MetricPoint, type MetricSeries } from './api'
 import { Icon } from './Icon'
 
 // The evidence panel (right pane) — a persistent, scrollable narrative of the
@@ -94,6 +94,7 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
                   <div className="ev-item-body">
                     {ev.label && <div className="ev-item-label">{ev.label}</div>}
                     <div className="ev-item-sub mono">{summarize(ev.kind, ev.payload)}</div>
+                    {ev.kind === 'metric' && real && <MetricSparkline service={g.service} metric={ev.aspect} />}
                     {searches.length > 0 && (
                       <div className="ev-item-search" onClick={e => e.stopPropagation()}>
                         {searches.map(s => (
@@ -217,3 +218,51 @@ const str = (v: unknown) => (v == null ? '' : String(v))
 const pctStr = (n: number) => `${n >= 0 ? '+' : ''}${Math.round(n).toLocaleString()}%`
 // React Flow node ids are service ids (safe chars), but guard the selector anyway.
 const cssId = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_')
+
+// --- metric sparkline -----------------------------------------------------
+
+// The pinned metric payload carries only the prose trajectory (shapeCode/prose),
+// not the points — so the card pulls the raw series live from /api/metrics. One
+// service can have several metric cards, so dedupe the fetch per service (the
+// endpoint returns every metric for the subject in one shot anyway).
+const seriesCache = new Map<string, Promise<MetricSeries[]>>()
+function loadSeries(service: string): Promise<MetricSeries[]> {
+  let p = seriesCache.get(service)
+  if (!p) { p = api.metrics(service); seriesCache.set(service, p) }
+  return p
+}
+
+// hand-rolled SVG polyline (matches TraceMini's no-charting-lib idiom). The svg
+// stretches to fill the card with preserveAspectRatio="none"; non-scaling-stroke
+// keeps the line crisp despite the horizontal stretch. Colour inherits the card's
+// --k (the metric green) via the custom-property cascade.
+function MetricSparkline({ service, metric }: { service: string; metric: string }) {
+  const [points, setPoints] = useState<MetricPoint[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    loadSeries(service)
+      .then(all => { if (alive) setPoints(all.find(s => s.metric === metric)?.points ?? []) })
+      .catch(() => { if (alive) setPoints([]) })
+    return () => { alive = false }
+  }, [service, metric])
+
+  if (!points || points.length < 2) return null
+  const vals = points.map(p => p.value)
+  const min = Math.min(...vals), max = Math.max(...vals)
+  const span = max - min || 1
+  const W = 240, H = 32, pad = 3
+  const path = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * W
+      const y = pad + (1 - (p.value - min) / span) * (H - 2 * pad)
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+  return (
+    <svg className="ev-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+      role="img" aria-label={`${metric} trajectory`}>
+      <polyline points={path} fill="none" stroke="var(--k)" strokeWidth={1.5}
+        strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}

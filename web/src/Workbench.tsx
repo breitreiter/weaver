@@ -116,11 +116,15 @@ export default function Workbench() {
     return c.id
   }
 
+  // re-pinning is always allowed: a card you pinned, removed from the evidence
+  // panel, and want back must work. The API dedups identical evidence, so a true
+  // double-click is a harmless no-op. pinned/pinCount are session hints only (the
+  // "done" check + the count), deliberately not reconciled against the board.
   async function pin(r: SearchResult) {
-    if (pinned.has(r.id)) return
     const id = await ensureBoard()
-    // serviceIds may carry several (a trace's participants); the API ensures a node
-    // for each and layers the evidence onto the subject. See board-build.md.
+    // nodeIds is normally a single service (a trace pins just its hot hop). The other
+    // services a trace touched are reached deliberately via the span search buttons in
+    // the trace card, not auto-dragged onto the board. See board-build.md.
     await api.pin(id, { serviceIds: r.pin.nodeIds, evidence: r.pin.evidence, label: r.title })
     setPinned(prev => new Set(prev).add(r.id))
     setPinCount(c => c + 1)
@@ -165,7 +169,7 @@ export default function Workbench() {
         <div className="search-head">
           <span className="brand">weaver</span>
           <span className="board-status">
-            {boardId ? `board ${boardId} · ${pinCount} pinned` : 'no board yet — pin something to start one'}
+            {boardId ? `board ${boardId} · ${pinned.size} pinned` : 'no board yet — pin something to start one'}
           </span>
         </div>
 
@@ -242,7 +246,7 @@ export default function Workbench() {
                 </div>
               : <div className="result-count">{results.length} result{results.length > 1 ? 's' : ''}</div>
           )}
-          {results.map(r => <ResultCard key={r.id} r={r} pinned={pinned.has(r.id)} onPin={() => pin(r)} />)}
+          {results.map(r => <ResultCard key={r.id} r={r} pinned={pinned.has(r.id)} onPin={() => pin(r)} onExplore={exploreService} />)}
         </div>
       </div>
 
@@ -272,7 +276,7 @@ function fmtTime(iso?: string): string {
   return new Date(t).toISOString().slice(0, 19).replace('T', ' ')
 }
 
-function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; onPin: () => void }) {
+function ResultCard({ r, pinned, onPin, onExplore }: { r: SearchResult; pinned: boolean; onPin: () => void; onExplore: (scope: string, svc: string) => void }) {
   const dir = r.type === 'anomaly' ? r.payload?.direction : undefined
   const startedAt = r.type === 'trace' ? fmtTime(r.payload?.trace?.startedAt) : ''
   return (
@@ -282,8 +286,8 @@ function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; on
           <Icon name={TYPE_ICON[r.type] ?? 'help'} size={15} /> {r.type}
         </span>
         <span className="card-title mono">{r.title}</span>
-        <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin} disabled={pinned}
-          title={pinned ? 'pinned to the board' : 'pin to the board'}>
+        <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin}
+          title={pinned ? 'pinned to the board — click to pin again' : 'pin to the board'}>
           <Icon name="graph_3" size={18} />
         </button>
       </div>
@@ -291,19 +295,26 @@ function ResultCard({ r, pinned, onPin }: { r: SearchResult; pinned: boolean; on
         {startedAt && <span className="card-time mono" title="trace start (UTC)">{startedAt}</span>}
         {r.subtitle}
       </div>
-      {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} />}
+      {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} onExplore={onExplore} />}
     </div>
   )
 }
 
-function TraceMini({ spans }: { spans: { id: string; serviceId: string; selfMs: number; status: string }[] }) {
+// the hottest hops of a trace, each service name a button that spiders the search
+// to that participant (services scope, filtered) — the deliberate way to bring a
+// trace's other services onto the board now that pinning no longer drags them in.
+function TraceMini({ spans, onExplore }: {
+  spans: { id: string; serviceId: string; selfMs: number; status: string }[]
+  onExplore: (scope: string, svc: string) => void
+}) {
   const top = [...spans].sort((a, b) => b.selfMs - a.selfMs).slice(0, 4)
   const max = Math.max(1, ...top.map(s => s.selfMs))
   return (
     <div className="trace-mini">
       {top.map(s => (
         <div className="hop" key={s.id}>
-          <span className="hop-svc mono">{s.serviceId}</span>
+          <button className="hop-svc mono" title={`search services for ${s.serviceId}`}
+            onClick={() => onExplore('services', s.serviceId)}>{s.serviceId}</button>
           <span className="hop-bar" style={{ width: `${(s.selfMs / max) * 100}%` }} />
           <span className="hop-ms">{s.selfMs}ms</span>
         </div>

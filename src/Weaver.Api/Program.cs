@@ -182,8 +182,8 @@ app.MapGet("/api/boards/{id}", (BoardsDbContext db, string id) =>
 });
 
 // Pin = ensure a node per service (idempotent — a service already on the board is
-// reused, not duplicated), then layer the evidence (if any) onto the first. A
-// trace passes its participant services; they all land, evidence on the subject.
+// reused, not duplicated), then layer the evidence (if any) onto the first. A trace
+// pins only its hot hop; its other participants are reached via the span search buttons.
 app.MapPost("/api/boards/{id}/pin", (BoardsDbContext db, string id, PinReq req) =>
 {
     if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
@@ -203,13 +203,20 @@ app.MapPost("/api/boards/{id}/pin", (BoardsDbContext db, string id, PinReq req) 
     }
     if (req.Evidence is { } ev)
     {
-        db.Evidence.Add(new EvidenceEntity
-        {
-            Id = NewId(), BoardId = id, ServiceId = services[0],
-            Kind = ev.Kind, Aspect = ev.Aspect, At = ev.At,
-            Payload = ev.Payload is null ? "{}" : JsonSerializer.Serialize(ev.Payload),
-            Label = req.Label, CreatedAt = NowIso(),
-        });
+        // dedup: the same finding (service + kind + aspect + time) is pinned at most
+        // once. The UI lets you re-pin freely — that's how a removed-then-re-added
+        // card works — so an already-present piece of evidence is silently discarded
+        // rather than piling up duplicates.
+        var dup = db.Evidence.Any(e => e.BoardId == id && e.ServiceId == services[0]
+            && e.Kind == ev.Kind && e.Aspect == ev.Aspect && e.At == ev.At);
+        if (!dup)
+            db.Evidence.Add(new EvidenceEntity
+            {
+                Id = NewId(), BoardId = id, ServiceId = services[0],
+                Kind = ev.Kind, Aspect = ev.Aspect, At = ev.At,
+                Payload = ev.Payload is null ? "{}" : JsonSerializer.Serialize(ev.Payload),
+                Label = req.Label, CreatedAt = NowIso(),
+            });
     }
     db.SaveChanges();
     return Results.Ok(new CreatedDto(services[0], $"/view?board={id}"));
@@ -375,14 +382,18 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             if (from is not null) tq = tq.Where(t => string.Compare(t.StartedAt, from) >= 0);
             if (to is not null) tq = tq.Where(t => string.Compare(t.StartedAt, to) <= 0);
             // a trace "belongs to" a service if any of its spans touch that service —
-            // this is how the traces button pulls in NODES adjacent to the one on the board.
+            // this is how the traces button finds the traces that involve the on-board node.
             if (service is not null) tq = tq.Where(t => db.Spans.Any(s => s.TraceId == t.Id && s.ServiceId == service));
             var rows = tq.OrderByDescending(t => t.DurationMs).Take(lim).ToList();
             return Results.Ok(rows.Select(t =>
             {
                 var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
                 var hot = spans.FirstOrDefault();
-                var nodeIds = spans.Select(s => s.ServiceId).Distinct().ToList();
+                // pin lands ONE node — the hot hop. The other participants aren't dragged
+                // in (that left orphan nodes with no stored reason); reach them on demand
+                // via the per-span search buttons in the trace card. Spans still ride in the
+                // payload so those buttons know every service the trace touched.
+                List<string> nodeIds = hot is not null ? [hot.ServiceId] : [];
                 return new SearchResultDto(
                     "trace", "tr:" + t.Id, $"{t.RequestTypeId}  {t.DurationMs}ms  {t.Status}",
                     hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
