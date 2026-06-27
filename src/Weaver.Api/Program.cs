@@ -98,12 +98,13 @@ app.MapGet("/api/metrics", (WeaverDbContext db, string subjectId, string? subjec
 app.MapGet("/api/logs", (WeaverDbContext db, string? serviceId, string? level,
     string? q, string? from, string? to, int? limit) =>
 {
-    IQueryable<LogEventEntity> query = string.IsNullOrWhiteSpace(q)
+    var fts = FtsQuery(q);
+    IQueryable<LogEventEntity> query = fts is null
         ? db.Logs
         : db.Logs.FromSqlInterpolated($@"
             SELECT le.* FROM log_events le
-            JOIN log_events_fts fts ON le.rowid = fts.rowid
-            WHERE log_events_fts MATCH {q}");
+            JOIN log_events_fts f ON le.rowid = f.rowid
+            WHERE log_events_fts MATCH {fts}");
 
     if (serviceId is not null) query = query.Where(l => l.ServiceId == serviceId);
     if (level is not null) query = query.Where(l => l.Level == level);
@@ -362,12 +363,13 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
         }
         case "logs":
         {
-            IQueryable<LogEventEntity> lq = string.IsNullOrWhiteSpace(q)
+            var fts = FtsQuery(q);
+            IQueryable<LogEventEntity> lq = fts is null
                 ? db.Logs
                 : db.Logs.FromSqlInterpolated($@"
                     SELECT le.* FROM log_events le
                     JOIN log_events_fts f ON le.rowid = f.rowid
-                    WHERE log_events_fts MATCH {q}");
+                    WHERE log_events_fts MATCH {fts}");
             if (service is not null) lq = lq.Where(l => l.ServiceId == service);
             if (level is not null) lq = lq.Where(l => l.Level == level);
             if (template is not null) lq = lq.Where(l => l.TemplateId == template);
@@ -495,12 +497,13 @@ app.MapGet("/api/search/histogram", (WeaverDbContext db, string? scope, string? 
     {
         case "logs":
         {
-            IQueryable<LogEventEntity> lq = string.IsNullOrWhiteSpace(q)
+            var fts = FtsQuery(q);
+            IQueryable<LogEventEntity> lq = fts is null
                 ? db.Logs
                 : db.Logs.FromSqlInterpolated($@"
                     SELECT le.* FROM log_events le
                     JOIN log_events_fts f ON le.rowid = f.rowid
-                    WHERE log_events_fts MATCH {q}");
+                    WHERE log_events_fts MATCH {fts}");
             if (level is not null) lq = lq.Where(l => l.Level == level);
             if (template is not null) lq = lq.Where(l => l.TemplateId == template);
             if (from is not null) lq = lq.Where(l => string.Compare(l.Ts, from) >= 0);
@@ -614,6 +617,20 @@ static SpanDto ToSpanDto(SpanEntity s) =>
     new(s.Id, s.ParentSpanId, s.ServiceId, s.EdgeId, s.Kind, s.StartOffsetMs, s.DurationMs, s.SelfMs, s.Status, ParseJson(s.Attributes));
 static JsonElement ParseJson(string s) =>
     JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(s) ? "{}" : s);
+
+// FTS5 parses the MATCH value as a query *expression*, so raw user text lets
+// metacharacters leak in — a ':' makes "api" read as a column filter and throws
+// "no such column: api". Quote each whitespace token as a literal phrase (doubling
+// any embedded quote) so ':' / parens / AND-OR-NOT are literal text. Result: a
+// plain AND-of-terms search. Returns null when the query is empty (→ no FTS join).
+static string? FtsQuery(string? q)
+{
+    if (string.IsNullOrWhiteSpace(q)) return null;
+    var terms = q.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                 .Select(t => '"' + t.Replace("\"", "\"\"") + '"');
+    var joined = string.Join(' ', terms);
+    return joined.Length == 0 ? null : joined;
+}
 
 // The search window arrives timezone-naive from the picker (the UTC wall-clock
 // the facet bounds are drawn from), so read it as UTC rather than server-local.
