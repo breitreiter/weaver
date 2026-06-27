@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Board as BoardData, type EvidenceItem, type BoardEdge, type MetricPoint, type MetricSeries } from './api'
+import { api, type Board as BoardData, type EvidenceItem, type MetricPoint, type MetricSeries } from './api'
 import { Icon } from './Icon'
+
+// causal/temporal/custom edges are the operator's red string; dependency & route
+// edges are tool-supplied facts (neutral). Mirrors Board's predicate.
+const isRedString = (kind: string) => kind !== 'dependency' && kind !== 'route'
 
 // The evidence panel (right pane) — a persistent, scrollable narrative of the
 // whole board. Each service is a SECTION HEADER (not a card); the evidence layered
@@ -26,9 +30,9 @@ const EXPLORE: { scope: string; icon: string; label: string }[] = [
   { scope: 'changes', icon: 'deployed_code_update', label: 'changes' },
 ]
 
-type NodeGroup = { service: string; label?: string; evidence: EvidenceItem[]; out: BoardEdge[] }
+type NodeGroup = { service: string; label?: string; evidence: EvidenceItem[] }
 
-export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService, onDeleteEdge }: {
+export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService, onDeleteEdge, onAddRelationship }: {
   board: BoardData | null
   focus: string | null
   onFocus: (svc: string) => void
@@ -36,6 +40,7 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
   onDeleteEvidence: (evidenceId: string) => void
   onDeleteService: (service: string) => void
   onDeleteEdge: (edgeId: string) => void
+  onAddRelationship: () => void
 }) {
   const groups = useMemo(() => board ? groupByService(board) : [], [board])
   const evidenceCount = useMemo(() => groups.reduce((n, g) => n + g.evidence.length, 0), [groups])
@@ -116,28 +121,36 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
               )
             })}
 
-            {g.out.length > 0 && (
-              <div className="ev-strings">
-                {g.out.map(e => (
-                  <div key={e.id} className="ev-string">
-                    <Icon name="trending_flat" size={16} className="ev-string-ico" />
-                    <div className="ev-string-body">
-                      <div className="ev-string-dir mono">{g.service} → {e.to}</div>
-                      <div className="ev-string-kind">{e.kind}{e.label ? `: ${e.label}` : ''}</div>
-                    </div>
-                    <div className="ev-string-actions" onClick={ev => ev.stopPropagation()}>
-                      <button className="ev-trash" title="remove this line"
-                        onClick={() => onDeleteEdge(e.id)}>
-                        <Icon name="delete" size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </section>
         )
       })}
+
+      {board && groups.length > 0 && (
+        <section className="ev-rels">
+          <div className="ev-rels-head">
+            <span className="ev-rels-title">relationships</span>
+            <button className="ev-rels-add" onClick={onAddRelationship} title="draw a relationship between two pinned services">
+              <Icon name="add" size={14} /> relationship
+            </button>
+          </div>
+          {board.edges.length === 0 && <div className="hint">no red string yet — relate two pins to draw one.</div>}
+          {board.edges.map(e => (
+            <div key={e.id} className={'ev-string' + (isRedString(e.kind) ? ' red' : '')}>
+              <Icon name="trending_flat" size={16} className="ev-string-ico" />
+              <div className="ev-string-body">
+                <div className="ev-string-dir mono">{e.from} → {e.to}</div>
+                <div className="ev-string-kind">
+                  {e.kind}{e.label ? `: ${e.label}` : ''}
+                  <span className="ev-string-by"> · {e.drawnBy}</span>
+                </div>
+              </div>
+              <button className="ev-trash" title="remove this line" onClick={() => onDeleteEdge(e.id)}>
+                <Icon name="delete" size={14} />
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   )
 }
@@ -145,11 +158,9 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
 // --- grouping + summaries -------------------------------------------------
 
 function groupByService(board: BoardData): NodeGroup[] {
-  // one section per node (service), in board order; the red string it throws
-  // hangs under it (edges are keyed by source service).
-  const out = new Map<string, BoardEdge[]>()
-  for (const e of board.edges) (out.get(e.from) ?? out.set(e.from, []).get(e.from)!).push(e)
-  return board.nodes.map(n => ({ service: n.serviceId, label: n.label, evidence: n.evidence, out: out.get(n.serviceId) ?? [] }))
+  // one section per node (service), in board order. Edges no longer hang under a
+  // service — they live in their own top-level relationships section (peer to pins).
+  return board.nodes.map(n => ({ service: n.serviceId, label: n.label, evidence: n.evidence }))
 }
 
 // per-item "find more like this" — only the searches that make sense for the

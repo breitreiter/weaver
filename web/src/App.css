@@ -4,7 +4,7 @@
 /* --- workbench: search (forage) | board (structure) | evidence (narrative) ---
    three equal panes (1:1:1) — board + evidence have matured into full
    co-researcher surfaces; flex weights are easy to tune live. */
-.workbench { display: flex; height: 100vh; }
+.workbench { display: flex; height: 100vh; position: relative; }
 .search-pane { flex: 1; min-width: 0; display: flex; flex-direction: column;
   border-right: 1px solid var(--border); background: var(--panel); }
 .board-pane { flex: 1; min-width: 0; position: relative; display: flex;
@@ -186,6 +186,10 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 
 /* relationship modal — the real relationships the data holds between two nodes */
 .modal-rel { width: 420px; }
+.rel-pick { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.rel-pick select { flex: 1; min-width: 0; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+.rel-pick-arrow { color: var(--text-dim); flex-shrink: 0; }
 .rel-section { color: var(--text-dim); font-size: 11px; text-transform: uppercase;
   letter-spacing: .4px; margin: 14px 0 8px; }
 .rel-section:first-of-type { margin-top: 4px; }
@@ -246,18 +250,26 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 /* metric sparkline — fills the card width, short fixed height, kind colour via --k */
 .ev-spark { display: block; width: 100%; height: 28px; margin-top: 6px; opacity: .85; }
 
-/* red string thrown by this service — a card (like ev-item) bordered in the
-   string colour, with a remove control mirroring the board's edge toolbar. */
-.ev-strings { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border);
-  display: flex; flex-direction: column; gap: 6px; }
-.ev-string { display: flex; gap: 8px; align-items: flex-start;
+/* relationships — a top-level section (peer to the pins): every edge on the board,
+   red string (hypothesis) or neutral dependency, each with drawnBy provenance and
+   a remove control. Was nested per source service; now its own section. */
+.ev-rels { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--border); }
+.ev-rels-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.ev-rels-title { color: var(--text-h); font-size: 13px; font-weight: 600; }
+.ev-rels-add { display: inline-flex; align-items: center; gap: 4px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.ev-rels-add:hover { color: var(--text-h); border-color: var(--accent); }
+.ev-string { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px;
   padding: 6px 8px; border-radius: 8px; background: var(--panel-2);
-  border: 2px solid var(--up); font-size: 11px; }
-.ev-string-ico { color: var(--up); margin-top: 1px; flex-shrink: 0; }
+  border: 1px solid var(--border); font-size: 11px; }
+.ev-string.red { border-color: var(--up); }
+.ev-string-ico { color: var(--text-dim); margin-top: 1px; flex-shrink: 0; }
+.ev-string.red .ev-string-ico { color: var(--up); }
 .ev-string-body { min-width: 0; flex: 1; }
 .ev-string-dir { color: var(--text); font-size: 12px; }
 .ev-string-kind { color: var(--text-dim); margin-top: 2px; }
-.ev-string-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.ev-string-by { color: var(--text-dim); opacity: 0.8; }
 
 /* "find for this service" — single-service searches fired into the left panel.
    service-level (all scopes) sits under the header; per-item ones live in the card. */

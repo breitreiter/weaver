@@ -4,6 +4,7 @@ import { api, type Facets, type SearchResult, type SearchParams, type Board as B
 import { Icon } from './Icon'
 import Board from './Board'
 import Evidence from './Evidence'
+import { RelationshipModal } from './RelationshipModal'
 
 // live-sync cadence for the board+evidence panels — slow enough to be cheap,
 // fast enough for the "watch the agent build the wall" moment.
@@ -53,6 +54,7 @@ export default function Workbench() {
   const [q, setQ] = useState('')
   const [f, setF] = useState<Record<string, string>>({})
   const [tz, setTz] = useState<Tz>('UTC')
+  const [relOpen, setRelOpen] = useState(false)
   const [results, setResults] = useState<SearchResult[]>([])
   const [running, setRunning] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -180,6 +182,14 @@ export default function Workbench() {
     await api.deleteEdge(boardId, edgeId)
     reloadBoard()
   }
+  // draw a red string from the drawer's "+ relationship" dialog — the human's
+  // edge-creation path, the same gesture as `weaver link x y --as z`. Both ends
+  // are already board members, so no dangling edge. drawnBy:'human'.
+  async function drawEdge(from: string, to: string, kind: string, label: string) {
+    if (!boardId) return
+    await api.link(boardId, { from, to, kind, label: label.trim() || undefined, drawnBy: 'human' })
+    setRelOpen(false); reloadBoard()
+  }
   const controls = CONTROLS[scope] ?? []
   const opts = (k: string): string[] => {
     if (!facets) return []
@@ -293,7 +303,12 @@ export default function Workbench() {
 
       <Evidence board={board} focus={focus} onFocus={setFocus} onExplore={exploreService}
         onDeleteEvidence={removeEvidence} onDeleteService={removeService}
-        onDeleteEdge={removeEdge} />
+        onDeleteEdge={removeEdge} onAddRelationship={() => setRelOpen(true)} />
+
+      {relOpen && board && (
+        <RelationshipModal members={board.nodes.map(n => n.serviceId)}
+          onDraw={drawEdge} onCancel={() => setRelOpen(false)} />
+      )}
     </div>
   )
 }
