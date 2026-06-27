@@ -18,9 +18,11 @@ is co-built by human *and* Claude.
 
 ### Left panel v2 — make it feel like legit search (rework)
 
-- [ ] **Take ≥50–60% of the screen.** The board is a secondary *evidence anchor*,
-      not the main attraction — search is where attention lives most of the time.
-      Currently search is a 440px sidebar; flip the weighting.
+- [ ] **Balance the three panels to equal thirds (1:1:1).** Supersedes the
+      original "search ≥50–60%" call: the board (red-string wall) and the evidence
+      narrative have matured into full co-researcher surfaces that now carry as
+      much of the session as search. Currently weighted 1.5 : 1.1 : 1
+      (`App.css:7-12`). See `project/plans/ux-cleanup.md` #5 (Phase 0).
 - [ ] **Structured query**, not just a command box — facets / filters (subsystem,
       kind, signal, level, route, window, threshold) alongside free text.
 - [ ] **Rich, type-aware result cards** — render each result for its kind, not a
@@ -111,6 +113,42 @@ flash-sale dataset. Remaining polish noted below.
       the other, traces are a path-lens, time selects+labels but never positions.
       Open: edge-evidence schema (`BoardEdge`), trace render (decompose vs lens).
       Read this before touching the graph/panel surface.
+
+## House style — a distinct visual identity
+
+Answers to `project/plans/design.md` (the design principles: who the user is,
+the Pirolli & Card cost-structure, density-warranted, visual-search, one-finding-
+one-identity, honest-over-clean). Identity is the *expression* of those; when a
+brand instinct and a principle disagree, the principle wins.
+
+The UI is currently vibe-coded bland — functional, no point of view. Needs a
+deliberate house style: typography, colour system (beyond the current kind
+palette), spacing/density, component vocabulary, the dark-instrument feel a
+mid-incident tool should have. Cross-cutting, not a one-screen tweak.
+
+- [ ] **Define the house style** — a small design language doc + token set, then
+      apply it across search / board / evidence. Pairs naturally with the graph
+      redesign (`project/plans/graph-redesign.md`): the hand-rolled SVG graph is a
+      blank canvas to set the aesthetic on, rather than inheriting React Flow's
+      defaults. *Likely Figma-led — coordinate with Joseph's noodling.*
+
+- [ ] **Semantic token layer (not appearance-named).** A library's real value is
+      *enforced grammar* — one token = one affordance everywhere (mui-blue =
+      "clickable"). We're DIY (plain React + bespoke CSS, no component lib), so we
+      own that consistency. Today's tokens (`index.css`) are appearance-named
+      (`--up`/`--down`/`--accent`) and have drifted: **`--up` (a red) now means
+      error AND "metric rose" AND danger/delete AND "red-string hypothesis"** —
+      four concepts, one colour. Re-name tokens by *meaning* (`--interactive`,
+      `--danger`, `--hypothesis`, `--metric-rise/-fall`, the evidence-kind palette
+      — currently raw hex repeated inline, tokenized nowhere) and have components
+      reference only those. Decide first: semantic-token layer over bespoke CSS
+      (lean) vs. headless primitives (Radix-style).
+
+- [ ] **Mechanical consistency pass** — sweep every colour/affordance usage to one
+      semantic token. Acceptance is grep-lintable, not vibes: zero raw hex in
+      component CSS (`grep -rE '#[0-9a-fA-F]{3,8}' web/src/*.css`), no bare
+      appearance-token used in a component, every clickable thing shares the
+      interactive signal. Wire the greps as a build check so drift fails CI.
 
 ## Polish (after the view direction lands)
 
