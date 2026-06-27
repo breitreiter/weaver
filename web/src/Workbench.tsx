@@ -19,9 +19,9 @@ const TYPE_ICON: Record<string, string> = {
   change: 'deployed_code_update',
 }
 
-// The workbench: search is the main event (≥55% of the screen); the board is a
-// secondary evidence anchor. Search is structured (scope + facets + free text)
-// and returns rich, typed, pinnable result cards over /api/search.
+// The workbench: three equal panes (1:1:1) — search (forage), board (structure),
+// evidence (narrative). Search is structured (scope + facets + free text) and
+// returns rich, typed, pinnable result cards over /api/search.
 
 const SCOPES = ['anomalies', 'traces', 'logs', 'services', 'metrics', 'changes']
 
@@ -52,6 +52,7 @@ export default function Workbench() {
   const [scope, setScope] = useState('anomalies')
   const [q, setQ] = useState('')
   const [f, setF] = useState<Record<string, string>>({})
+  const [tz, setTz] = useState<Tz>('UTC')
   const [results, setResults] = useState<SearchResult[]>([])
   const [running, setRunning] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -137,6 +138,19 @@ export default function Workbench() {
 
   const setField = (k: string, v: string) => setF(prev => ({ ...prev, [k]: v }))
 
+  // range-picker accelerators: preset windows anchored to the dataset's end
+  // ('' = full / unbounded). Writes the canonical UTC from/to (run() sends them
+  // as-is; the picker re-displays them in the selected zone).
+  const setRange = (minutes: number | '') => {
+    if (minutes === '') { setF(prev => ({ ...prev, from: '', to: '' })); return }
+    if (!facets) return
+    const end = Date.parse(facets.window.end.endsWith('Z') ? facets.window.end : facets.window.end + 'Z')
+    if (Number.isNaN(end)) return
+    const from = new Date(end - minutes * 60000).toISOString().slice(0, 16)
+    const to = new Date(end).toISOString().slice(0, 16)
+    setF(prev => ({ ...prev, from, to }))
+  }
+
   // explore button on a board/evidence card → reset the left panel to a fresh
   // single-service query in the chosen scope (clears free text + every other
   // facet), so the operator can span out from a pinned node without touching the
@@ -182,7 +196,7 @@ export default function Workbench() {
         <div className="search-head">
           <span className="brand">weaver</span>
           <span className="board-status">
-            {boardId ? `board ${boardId} · ${pinned.size} pinned` : 'no board yet — pin something to start one'}
+            {boardId ? `board ${boardId}` : 'no board yet — pin something to start one'}
           </span>
         </div>
 
@@ -218,23 +232,28 @@ export default function Workbench() {
           ))}
           {controls.includes('time') && facets && (
             <>
-              <span className="time-tz" title="all times shown and filtered in UTC">UTC</span>
+              <label>zone
+                <select value={tz} onChange={e => setTz(e.target.value as Tz)}>
+                  <option value="UTC">UTC</option>
+                  <option value="Local">Local</option>
+                </select>
+              </label>
               <label>from
-                <input type="datetime-local" className="time-input" value={f.from ?? ''}
-                  min={facets.window.start.slice(0, 16)} max={facets.window.end.slice(0, 16)}
-                  onChange={e => setField('from', e.target.value)} />
+                <input type="datetime-local" className="time-input" value={toDisplay(f.from ?? '', tz)}
+                  min={toDisplay(facets.window.start.slice(0, 16), tz)} max={toDisplay(facets.window.end.slice(0, 16), tz)}
+                  onChange={e => setField('from', toUtc(e.target.value, tz))} />
               </label>
               <label>to
-                <input type="datetime-local" className="time-input" value={f.to ?? ''}
-                  min={facets.window.start.slice(0, 16)} max={facets.window.end.slice(0, 16)}
-                  onChange={e => setField('to', e.target.value)} />
+                <input type="datetime-local" className="time-input" value={toDisplay(f.to ?? '', tz)}
+                  min={toDisplay(facets.window.start.slice(0, 16), tz)} max={toDisplay(facets.window.end.slice(0, 16), tz)}
+                  onChange={e => setField('to', toUtc(e.target.value, tz))} />
               </label>
-              {(f.from || f.to) && (
-                <button type="button" className="time-clear" title="clear time range"
-                  onClick={() => setF(prev => ({ ...prev, from: '', to: '' }))}>
-                  <Icon name="close" size={14} /> clear
-                </button>
-              )}
+              <div className="time-presets">
+                <button type="button" onClick={() => setRange('')} title="full window (unbounded)">full</button>
+                <button type="button" onClick={() => setRange(15)} title="last 15 minutes of the window">15m</button>
+                <button type="button" onClick={() => setRange(60)} title="last hour of the window">1h</button>
+                <button type="button" onClick={() => setRange(360)} title="last 6 hours of the window">6h</button>
+              </div>
             </>
           )}
         </div>
@@ -251,7 +270,7 @@ export default function Workbench() {
         <div className="results">
           {running && <div className="hint">searching…</div>}
           {err && <div className="error">{err}</div>}
-          {!running && !err && results.length === 0 && <div className="hint">No results. Try a different scope or loosen the facets.</div>}
+          {!running && !err && results.length === 0 && <div className="hint">{emptyMessage(scope, q, f)}</div>}
           {!running && !err && results.length > 0 && (
             results.length >= RESULT_LIMIT
               ? <div className="result-count capped">
@@ -259,7 +278,7 @@ export default function Workbench() {
                 </div>
               : <div className="result-count">{results.length} result{results.length > 1 ? 's' : ''}</div>
           )}
-          {results.map(r => <ResultCard key={r.id} r={r} pinned={pinned.has(r.id)} onPin={() => pin(r)} onExplore={exploreService} />)}
+          {results.map(r => <ResultCard key={r.id} r={r} tz={tz} pinned={pinned.has(r.id)} onPin={() => pin(r)} onExplore={exploreService} />)}
         </div>
       </div>
 
@@ -279,20 +298,59 @@ export default function Workbench() {
   )
 }
 
-// trace timestamps are stored UTC (…Z) and the time filters above are timezone-
-// naive over that same UTC window, so render in UTC to keep cards and the picker
-// in one frame of reference. Returns "YYYY-MM-DD HH:mm:ss" — directly readable
-// into the from/to controls.
-function fmtTime(iso?: string): string {
+// Timezone handling. from/to are stored as the canonical UTC wall-clock the
+// backend string-compares against (run() sends them unchanged), so only display
+// and entry shift with `tz`: UTC is identity; Local round-trips through the native
+// Date, which applies the browser's zone + DST correctly. All strings are the
+// datetime-local shape "YYYY-MM-DDTHH:mm".
+type Tz = 'UTC' | 'Local'
+
+// canonical UTC wall-clock → what the picker should show in `tz`
+function toDisplay(utc: string, tz: Tz): string {
+  if (!utc || tz === 'UTC') return utc
+  const t = Date.parse(utc + 'Z')
+  if (Number.isNaN(t)) return utc
+  // 'sv-SE' renders "YYYY-MM-DD HH:mm:ss" in the runtime's local zone
+  return new Date(t).toLocaleString('sv-SE').slice(0, 16).replace(' ', 'T')
+}
+
+// what the user typed in `tz` → canonical UTC wall-clock
+function toUtc(display: string, tz: Tz): string {
+  if (!display || tz === 'UTC') return display
+  const t = Date.parse(display) // no 'Z' → parsed as local time
+  if (Number.isNaN(t)) return display
+  return new Date(t).toISOString().slice(0, 16)
+}
+
+// trace timestamps are stored UTC (…Z); render them in the selected zone so cards
+// and the picker stay in one frame. Returns "YYYY-MM-DD HH:mm:ss".
+function fmtTime(iso: string | undefined, tz: Tz): string {
   if (!iso) return ''
   const t = Date.parse(iso.endsWith('Z') ? iso : iso + 'Z')
   if (Number.isNaN(t)) return ''
-  return new Date(t).toISOString().slice(0, 19).replace('T', ' ')
+  return tz === 'Local'
+    ? new Date(t).toLocaleString('sv-SE')
+    : new Date(t).toISOString().slice(0, 19).replace('T', ' ')
 }
 
-function ResultCard({ r, pinned, onPin, onExplore }: { r: SearchResult; pinned: boolean; onPin: () => void; onExplore: (scope: string, svc: string) => void }) {
+// Empty-state copy that names what's actually filtering the view, so "no results"
+// reads as "you're looking at a filtered slice", not "nothing exists". Doubles as
+// the facet-brick cue: a dead facet combo explains itself rather than just bricking.
+function emptyMessage(scope: string, q: string, f: Record<string, string>): string {
+  const parts: string[] = []
+  if (q.trim()) parts.push(`“${q.trim()}”`)
+  for (const [k, v] of Object.entries(f)) {
+    if (!v || k === 'from' || k === 'to') continue
+    parts.push(`${k} ${v}`)
+  }
+  if (f.from || f.to) parts.push(`window ${f.from || '…'} – ${f.to || '…'} UTC`)
+  const where = parts.length ? ` for ${parts.join(', ')}` : ''
+  return `No ${scope}${where}. Loosen a facet or widen the window.`
+}
+
+function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: Tz; pinned: boolean; onPin: () => void; onExplore: (scope: string, svc: string) => void }) {
   const dir = r.type === 'anomaly' ? r.payload?.direction : undefined
-  const startedAt = r.type === 'trace' ? fmtTime(r.payload?.trace?.startedAt) : ''
+  const startedAt = r.type === 'trace' ? fmtTime(r.payload?.trace?.startedAt, tz) : ''
   return (
     <div className={'card' + (dir ? ` dir-${dir}` : '')}>
       <div className="card-head">
@@ -308,7 +366,7 @@ function ResultCard({ r, pinned, onPin, onExplore }: { r: SearchResult; pinned: 
         </button>
       </div>
       <div className="card-sub">
-        {startedAt && <span className="card-time mono" title="trace start (UTC)">{startedAt}</span>}
+        {startedAt && <span className="card-time mono" title={`trace start (${tz})`}>{startedAt}</span>}
         {r.subtitle}
       </div>
       {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} onExplore={onExplore} />}
