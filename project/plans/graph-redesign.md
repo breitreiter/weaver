@@ -186,6 +186,71 @@ The order is a dependency chain — each step de-risks the next:
 (2 and 4 can merge — the SVG node *is* the thinned dot. Listed apart so the chip
 migration can land first against React Flow if we want a smaller first diff.)
 
+## Phase 1 — implementation plan (locked)
+
+Grounded against the current code. **Order refined from the chain above:** that
+list leads with hover-highlight, but (a) CSS attr-selector lighting is far easier
+on hand-rolled SVG than reaching into React Flow's DOM, and (b) dropping React
+Flow kills drag-to-connect — the *only* human edge-creation path — so its drawer
+replacement must exist **first**. So: replacement → swap → polish.
+
+Decisions taken: **trace path-lens lights the path** (widen the pin payload — see
+step 3); **pan/zoom dropped** (the computed `viewBox` auto-fits, and the board
+holds only pinned nodes — re-add later if a board ever needs it).
+
+Current state being changed:
+- `Board.tsx` — React Flow (`@xyflow/react` + `dist/style.css`). `nodesConnectable`
+  (`:147`); drag→`onConnect`→`RelationshipModal` (`:71`,`:110`); `onEdgeClick`→
+  `EdgeToolbar` delete (`:75`,`:107`); `onNodeClick`→focus (`:97`); `ServiceNode`
+  chip panel (`:157`); `buildGraph`/`layout` (`:284`,`:333`). Vestigial
+  `crossedOut` styling (`:319`) — dead since commit `37a78ee`; won't port.
+- `Evidence.tsx` — edges nested under source service (`ev-strings :119`,
+  `groupByService :147`), `drawnBy` not shown; `onDeleteEdge` already here (`:130`).
+- `Workbench.tsx` — owns `focus` (URL), polls board 2.5s, shares one copy.
+
+**Step 1 — Drawer: relationships section + "+ relationship" dialog.**
+- Pull edges out of per-service nesting into a **top-level relationships section**,
+  peer to pins; show `drawnBy: human|agent` (already on `BoardEdge`, `api.ts:43`).
+- Relocate `RelationshipModal` (`Board.tsx:202`) to Workbench level; add **x/y
+  pickers constrained to `board.nodes`** (replacing drag-supplied source/target).
+  Keep the `/api/relationships` grounding step (`:213`) and `api.link(…,
+  drawnBy:'human')` (`:84`) unchanged. React Flow still live → drag still works
+  (redundantly); de-risks the swap.
+
+**Step 2 — SVG swap + thin node.**
+- Replace React Flow with hand-rolled SVG (the `MetricSparkline`/`TraceMini`
+  idiom). **Reuse `layout()` as-is** (`Board.tsx:333`); positions → `<circle>` +
+  `<text>` label + `<line>`/`<path>` edges. **Compute `viewBox` from node bounds**
+  (drops the `fitView` at `:131`). No pan/zoom.
+- Node → dot + always-on label (board bright, ambient dimmed); chips drop (drawer
+  has them). Edges: hairline grey dependency, red strings (`isRedString :31`,
+  dedupe `:289` port over). Drop `onConnect`/`onEdgeClick`/`EdgeToolbar`/
+  `nodesConnectable` (the "remove edit surface" step folds in here). Keep
+  `onNodeClick→onFocus`. Removes `@xyflow/react` + `dist/style.css`.
+
+**Step 3 — Hover-highlight keystone.**
+- Backend: widen the trace pin payload in `TraceResult` (`Program.cs:761-762`) to
+  carry `serviceIds` (distinct participants) — existing pinned traces lack it until
+  re-pinned.
+- `highlight: {nodeIds, edgeIds} | null` ephemeral state in Workbench (plain state,
+  not URL/poll), prop-drilled to Board + Evidence. Evidence emits on
+  mouseenter/leave: node-kinds → `{[service],[]}`; edge row → `{[from,to],[edgeId]}`;
+  trace → on-board participants + dependency edges among them.
+- Board applies `data-lit` / dims the rest via CSS (compositor-driven
+  `opacity`/`stroke`). **Node/edge identity memo-stable so the 2.5s poll doesn't
+  remount mid-transition** (the real must-fix). Hovers are drawer-originated and
+  *discrete* (not graph mousemove), so a React state set per enter is fine for a
+  small board — relaxing the doc's strict CSS-only stance; revisit if a large board
+  janks. Motion goalposts per §3: spotlight not paint, asymmetric easing
+  (~120ms in / ~270ms out), anti-flicker on fast traversal.
+
+**Step 4 — Click a drawer edge → highlight endpoints + string.** Same mechanism,
+on click.
+
+Out of scope: edge-evidence rendering (`graph-model.md`); the house-style
+aesthetic on the new canvas (Phase 2). Verification needs Joseph to restart the
+API (step 3 payload) + web dev server.
+
 ## Settled / open
 
 | Piece | State |
@@ -201,7 +266,8 @@ migration can land first against React Flow if we want a smaller first diff.)
 | Hover-highlight = transient state, not URL | ✅ settled |
 | Highlight vocabulary (kind→subgraph; trace = path-lens) | ✅ settled (shape) |
 | Highlight motion spec (easing, anti-flicker, perf) | ⬜ open — rep-heavy; "solid" defined in §3 |
-| Pan/zoom kept or dropped once viewBox auto-fits | ⬜ open — decide in build |
+| Pan/zoom kept or dropped once viewBox auto-fits | ✅ dropped (Phase 1) |
+| Trace path-lens lights the path (widen pin payload with `serviceIds`) | ✅ decided (Phase 1) |
 | Edge-evidence rendering (per `graph-model.md`) | ⬜ open — separate; not this plan |
 
 The line we keep: the graph enumerates and reflects; it never concludes and never
