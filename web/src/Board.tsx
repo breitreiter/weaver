@@ -1,246 +1,111 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls,
-  Handle, Position, useReactFlow,
-  type Node, type Edge, type NodeProps, type Connection,
-} from '@xyflow/react'
-import '@xyflow/react/dist/style.css'
-import { api, type Board as BoardData } from './api'
-import { Icon } from './Icon'
-import { RelationshipModal } from './RelationshipModal'
+import { useMemo } from 'react'
+import { type Board as BoardData } from './api'
 
-// The board (middle pane / wall of red string). React Flow: render the pinned
-// nodes + edges, pan/zoom, auto-tidied layout. Edges are drawn human-side
-// (drag node→node → relationship modal) or agent-side (CLI `weaver link`); either
-// can be CROSSED OUT — the demo's payoff: cut the red string after exoneration.
-// Clicking a node focuses it (URL ?focus=), scrolling the evidence panel to it.
-// See project/plans/board-build.md. Manual node placement is still deferred.
-//
-// Board data is fetched once in the Workbench and passed in, so the board and
-// evidence panels read one always-in-sync copy. The server returns one node per
-// service, each carrying its layered evidence; chips summarize that evidence.
-
-// evidence kinds only — a node is a service (no 'node' kind). The chip says what
-// kind of finding is layered on the service.
-const KIND_ICON: Record<string, string> = {
-  anomaly: 'warning', log: 'description',
-  trace: 'account_tree', metric: 'monitoring', change: 'deployed_code_update',
-}
+// The board (middle pane / wall of red string) — a PASSIVE reflection of board
+// state, hand-rolled SVG (same no-charting-lib idiom as MetricSparkline/TraceMini).
+// It originates nothing: the only affordance is click a dot → focus it (URL
+// ?focus=), which scrolls the evidence panel. Edge creation/deletion live in the
+// drawer now; the graph just renders the pinned nodes + their edges. The viewBox is
+// computed from node bounds, so the graph always fits its panel by construction —
+// no fitView, no pan/zoom. See project/plans/graph-redesign.md.
 
 // causal/temporal/custom edges are the operator's red string; dependency & route
-// edges are tool-supplied facts (neutral). Anything else reads as string.
+// edges are tool-supplied facts (neutral).
 const isRedString = (kind: string) => kind !== 'dependency' && kind !== 'route'
 
-const COL_W = 240
-const ROW_H = 116
-const MAX_COLS = 6 // a band wider than this wraps into a grid band
+// depth (dependency layer) is the LOW-cardinality axis — services rarely chain
+// more than a few deep — so map it to the scarce width; service fan-out (siblings
+// at a depth) is high-cardinality, so stack it down the abundant height. Fits the
+// narrow-but-tall board pane: a flat set of pins becomes a tall column, not a line.
+const COL_W = 210  // width per depth column (room for a dot + its label)
+const ROW_H = 40   // height per sibling row (dots stack cheaply)
+const MAX_ROWS = 8 // a depth taller than this spills into an adjacent sub-column
+const NODE_R = 7   // dot radius
+const PAD = 48     // viewBox padding around the content
+const CHAR_W = 7.5 // rough label glyph width, to keep labels inside the viewBox
 
-type ServiceNodeData = {
-  service: string
-  chips: { kind: string; count: number }[]
-  evidenceCount: number
-}
-type EdgeData = { crossedOut: boolean; drawnBy: string; kind: string }
+type GNode = { id: string; x: number; y: number }
+type GEdge = { id: string; x1: number; y1: number; x2: number; y2: number; red: boolean }
 
-type EvidenceNode = Node<ServiceNodeData, 'service'>
-type SelectedEdge = { id: string; label: string; source: string; target: string }
-
-export default function Board({ boardId, board, reload, focus, onFocus }: {
-  boardId: string
+export default function Board({ board, focus, onFocus }: {
   board: BoardData | null
-  reload: () => void
   focus: string | null
   onFocus: (svc: string) => void
 }) {
-  const [connect, setConnect] = useState<{ source: string; target: string } | null>(null)
-  const [selected, setSelected] = useState<SelectedEdge | null>(null)
+  const g = useMemo(() => (board ? buildGraph(board) : null), [board])
 
-  const { nodes, edges } = useMemo(() => {
-    const g = board ? buildGraph(board) : { nodes: [], edges: [] }
-    // reflect the focused node as React Flow selection (highlight)
-    return { nodes: g.nodes.map(n => ({ ...n, selected: n.id === focus })), edges: g.edges }
-  }, [board, focus])
-
-  const onConnect = useCallback((c: Connection) => {
-    if (c.source && c.target && c.source !== c.target) setConnect({ source: c.source, target: c.target })
-  }, [])
-
-  const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-    setSelected({
-      id: edge.id, source: edge.source, target: edge.target,
-      label: typeof edge.label === 'string' ? edge.label : '',
-    })
-  }, [])
-
-  // from/to come from the chosen relationship (real direction), not the drag.
-  async function drawEdge(from: string, to: string, kind: string, label: string) {
-    await api.link(boardId, { from, to, kind, label: label.trim() || undefined, drawnBy: 'human' })
-    setConnect(null); reload()
-  }
-  async function removeEdge() {
-    if (!selected) return
-    await api.deleteEdge(boardId, selected.id)
-    setSelected(null); reload()
-  }
-
-  return (
-    <div className="board-flow">
-      <ReactFlowProvider>
-        <Flow nodes={nodes} edges={edges} onConnect={onConnect} onEdgeClick={onEdgeClick}
-          onNodeClick={(_, n) => onFocus(n.id)} onPaneClick={() => setSelected(null)} />
-      </ReactFlowProvider>
-
-      {board && nodes.length === 0 && (
-        <div className="board-overlay">
-          <div className="board-empty-title">the board</div>
-          <div>nothing pinned yet — pin a finding and it lands here.</div>
-        </div>
-      )}
-
-      {selected && (
-        <EdgeToolbar selected={selected} onRemove={removeEdge} onClose={() => setSelected(null)} />
-      )}
-      {connect && board && (
-        <RelationshipModal members={board.nodes.map(n => n.serviceId)}
-          initialSource={connect.source} initialTarget={connect.target}
-          onDraw={drawEdge} onCancel={() => setConnect(null)} />
-      )}
-    </div>
-  )
-}
-
-const nodeTypes = { service: ServiceNode }
-
-function Flow({ nodes, edges, onConnect, onEdgeClick, onNodeClick, onPaneClick }: {
-  nodes: EvidenceNode[]; edges: Edge[]
-  onConnect: (c: Connection) => void
-  onEdgeClick: (e: React.MouseEvent, edge: Edge) => void
-  onNodeClick: (e: React.MouseEvent, node: EvidenceNode) => void
-  onPaneClick: () => void
-}) {
-  const { fitView } = useReactFlow()
-  const had = useRef(0)
-  // fit once when the first nodes arrive (and again if a board goes empty→full).
-  useEffect(() => {
-    if (had.current === 0 && nodes.length > 0) fitView({ duration: 300, padding: 0.2, maxZoom: 1 })
-    had.current = nodes.length
-  }, [nodes.length, fitView])
-
-  return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      onConnect={onConnect}
-      onEdgeClick={onEdgeClick}
-      onNodeClick={onNodeClick}
-      onPaneClick={onPaneClick}
-      fitView
-      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-      nodesDraggable={false}
-      nodesConnectable
-      proOptions={{ hideAttribution: true }}
-      minZoom={0.2}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#20242e" />
-      <Controls showInteractive={false} />
-    </ReactFlow>
-  )
-}
-
-function ServiceNode({ data }: NodeProps<EvidenceNode>) {
-  return (
-    <div className="bnode">
-      <Handle type="target" position={Position.Top} />
-      <div className="bnode-head">
-        <Icon name="deployed_code" size={16} className="bnode-ico" />
-        <span className="bnode-title mono">{data.service}</span>
+  if (!g || g.nodes.length === 0) {
+    return (
+      <div className="board-overlay">
+        <div className="board-empty-title">the board</div>
+        <div>nothing pinned yet — pin a finding and it lands here.</div>
       </div>
-      {data.chips.length > 0 && (
-        <div className="bnode-chips">
-          {data.chips.map(c => (
-            <span key={c.kind} className={`bchip bchip-${c.kind}`} title={`${c.count} ${c.kind}`}>
-              <Icon name={KIND_ICON[c.kind] ?? 'help'} size={13} />
-              {c.count > 1 && <span className="bchip-n">{c.count}</span>}
-            </span>
-          ))}
-        </div>
-      )}
-      <Handle type="source" position={Position.Bottom} />
-    </div>
-  )
-}
+    )
+  }
 
-// floating toolbar for a selected edge — remove the line (delete is the only
-// board op; ruling a lead out lives in the case log, not as struck-through
-// clutter on the wall — see project/plans/case-log.md).
-function EdgeToolbar({ selected, onRemove, onClose }: {
-  selected: SelectedEdge; onRemove: () => void; onClose: () => void
-}) {
   return (
-    <div className="edge-toolbar">
-      <span className="edge-toolbar-label mono">
-        {selected.source} → {selected.target}{selected.label ? `  ·  ${selected.label}` : ''}
-      </span>
-      <button className="etb-btn etb-danger" onClick={onRemove}><Icon name="delete" size={15} />remove</button>
-      <button className="etb-btn" onClick={onClose}><Icon name="close" size={15} /></button>
-    </div>
+    <svg className="board-svg" viewBox={g.viewBox} preserveAspectRatio="xMidYMid meet">
+      <g className="board-edges">
+        {g.edges.map(e => (
+          <line key={e.id} className={'bedge' + (e.red ? ' red' : '')}
+            x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} />
+        ))}
+      </g>
+      <g className="board-nodes">
+        {g.nodes.map(n => (
+          <g key={n.id} className={'bnode' + (n.id === focus ? ' focused' : '')}
+            transform={`translate(${n.x},${n.y})`} onClick={() => onFocus(n.id)} role="button">
+            <circle className="bnode-dot" r={NODE_R} />
+            <text className="bnode-label" x={NODE_R + 6} dominantBaseline="middle">{n.id}</text>
+          </g>
+        ))}
+      </g>
+    </svg>
   )
 }
 
 // --- graph construction ---------------------------------------------------
 
-type Link = { from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean; id: string }
-
-function buildGraph(board: BoardData): { nodes: EvidenceNode[]; edges: Edge[] } {
+function buildGraph(board: BoardData): { nodes: GNode[]; edges: GEdge[]; viewBox: string } {
   const services = board.nodes.map(n => n.serviceId)
   const present = new Set(services)
 
   // edges connect services directly; dedupe by pair+kind, drop any dangling end.
   const seen = new Set<string>()
-  const links: Link[] = []
+  const links: { from: string; to: string; kind: string; id: string }[] = []
   for (const e of board.edges) {
     if (!present.has(e.from) || !present.has(e.to) || e.from === e.to) continue
     const key = `${e.from}->${e.to}->${e.kind}`
     if (seen.has(key)) continue
     seen.add(key)
-    links.push({ from: e.from, to: e.to, kind: e.kind, label: e.label, drawnBy: e.drawnBy, crossedOut: e.crossedOut, id: e.id })
+    links.push({ from: e.from, to: e.to, kind: e.kind, id: e.id })
   }
 
   const pos = layout(services, links)
+  const nodes: GNode[] = services.map(s => ({ id: s, x: pos.get(s)!.x, y: pos.get(s)!.y }))
+  const byId = new Map(nodes.map(n => [n.id, n]))
 
-  const nodes: EvidenceNode[] = board.nodes.map(n => {
-    const counts = new Map<string, number>()
-    for (const ev of n.evidence) counts.set(ev.kind, (counts.get(ev.kind) ?? 0) + 1)
-    const chips = [...counts.entries()].map(([kind, count]) => ({ kind, count }))
-    return { id: n.serviceId, type: 'service', position: pos.get(n.serviceId)!, data: { service: n.serviceId, chips, evidenceCount: n.evidence.length } }
+  const edges: GEdge[] = links.map(l => {
+    const a = byId.get(l.from)!, b = byId.get(l.to)!
+    return { id: l.id, x1: a.x, y1: a.y, x2: b.x, y2: b.y, red: isRedString(l.kind) }
   })
 
-  const edges: Edge[] = links.map(l => {
-    const red = isRedString(l.kind)
-    const cut = l.crossedOut
-    return {
-      id: l.id,
-      source: l.from,
-      target: l.to,
-      label: l.label ?? (red ? l.kind : undefined),
-      animated: red && !cut,
-      data: { crossedOut: cut, drawnBy: l.drawnBy, kind: l.kind } satisfies EdgeData,
-      className: [red ? 'edge-string' : 'edge-dep', cut ? 'edge-cut' : '', `edge-${l.drawnBy}`].filter(Boolean).join(' '),
-      style: cut
-        ? { stroke: 'var(--up)', strokeWidth: 2, opacity: 0.4, strokeDasharray: '2 5' }
-        : red
-          ? { stroke: 'var(--up)', strokeWidth: 2 }
-          : { stroke: 'var(--text-dim)', strokeWidth: 1 },
-    }
-  })
-
-  return { nodes, edges }
+  // viewBox from node bounds + a right-hand allowance for the labels (svg clips to
+  // the viewBox), so the whole graph fits the panel by construction.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x - NODE_R)
+    minY = Math.min(minY, n.y - NODE_R)
+    maxX = Math.max(maxX, n.x + NODE_R + 6 + n.id.length * CHAR_W)
+    maxY = Math.max(maxY, n.y + NODE_R)
+  }
+  const vb = `${minX - PAD} ${minY - PAD} ${maxX - minX + PAD * 2} ${maxY - minY + PAD * 2}`
+  return { nodes, edges, viewBox: vb }
 }
 
-// Deterministic, layered top→bottom by dependency depth — never force-directed.
-// Matches the node connectors (target on top, source on bottom) and the tall panel.
-// Wide bands (e.g. many unconnected pins, all depth 0) wrap into a grid band.
+// Deterministic depth layering (longest-path) — never force-directed. Transposed
+// for the narrow-tall pane: depth runs left→right (few columns), siblings stack
+// down (many rows). A flat set of pins → one tall column, not a wide line.
 function layout(
   services: string[],
   links: { from: string; to: string }[],
@@ -273,23 +138,24 @@ function layout(
     frontier = [...new Set(next)].sort()
   }
 
-  // bucket by depth, place each band top→bottom; wrap wide bands into sub-rows.
+  // bucket by depth; each depth is a COLUMN, its services stacked down the height.
+  // a depth taller than MAX_ROWS spills into an adjacent sub-column.
   const bands = new Map<number, string[]>()
   for (const s of services) {
     const d = depth.get(s)!
     ;(bands.get(d) ?? bands.set(d, []).get(d)!).push(s)
   }
   const pos = new Map<string, { x: number; y: number }>()
-  let y = 0
+  let x = 0
   for (const d of [...bands.keys()].sort((a, b) => a - b)) {
     const band = bands.get(d)!.sort()
-    const subRows = Math.ceil(band.length / MAX_COLS)
+    const subCols = Math.ceil(band.length / MAX_ROWS)
     band.forEach((s, i) => {
-      const sub = Math.floor(i / MAX_COLS)
-      const col = i % MAX_COLS
-      pos.set(s, { x: col * COL_W, y: y + sub * ROW_H })
+      const sub = Math.floor(i / MAX_ROWS)
+      const row = i % MAX_ROWS
+      pos.set(s, { x: x + sub * COL_W, y: row * ROW_H })
     })
-    y += Math.max(1, subRows) * ROW_H
+    x += Math.max(1, subCols) * COL_W
   }
   return pos
 }

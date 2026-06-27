@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@xyflow/react": "^12.11.0",
     "material-symbols": "^0.44.12",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

@@ -106,61 +106,28 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .board-empty { text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
 .board-empty-title { color: var(--text); font-size: 18px; font-weight: 600; margin-bottom: 6px; }
 
-/* --- the board: React Flow canvas ------------------------------------- */
-.board-flow { position: relative; width: 100%; height: 100%; }
-.board-msg { display: flex; align-items: center; justify-content: center; }
+/* --- the board: hand-rolled SVG (passive reflection of board state) ----- */
+.board-svg { width: 100%; height: 100%; display: block; }
 .board-overlay { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 4px; pointer-events: none;
   text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
 
-/* React Flow chrome → match the dark theme */
-.react-flow__controls { box-shadow: none; }
-.react-flow__controls-button { background: var(--panel-2); border-bottom: 1px solid var(--border);
-  color: var(--text); }
-.react-flow__controls-button:hover { background: var(--panel); }
-.react-flow__controls-button svg { fill: var(--text); }
-.react-flow__attribution { display: none; }
-
-/* basic node — a service with its evidence chips. (visual is placeholder; the
-   designed node control swaps in later — board-build.md phase 7) */
-.bnode { min-width: 150px; max-width: 200px; background: var(--panel-2);
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
-  font-size: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
-.bnode-head { display: flex; align-items: center; gap: 6px; }
+/* service-header icon, shared with the evidence drawer */
 .bnode-ico { color: #7aa2f7; }
-.bnode-title { color: var(--text-h); font-size: 12px; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.bnode-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.bchip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px;
-  border-radius: 4px; color: #0c1018; font-size: 10px; font-weight: 600; }
-.bchip-n { font-size: 10px; }
-.bchip-anomaly { background: #e0a35a; }
-.bchip-log { background: #9aa5b1; }
-.bchip-trace { background: #9d7cd8; }
-.bchip-metric { background: #73c991; }
-.bchip-change { background: #e06c9f; }
 
-.react-flow__node.selected .bnode { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.react-flow__handle { width: 7px; height: 7px; background: var(--accent); border: none; }
-.react-flow__edge { cursor: pointer; }
-.react-flow__edge.edge-string .react-flow__edge-path { stroke-dasharray: 6 3; }
-.react-flow__edge-text { fill: var(--text); font-size: 10px; }
-.react-flow__edge-textbg { fill: var(--panel); }
-/* a cut red string — kept, struck through (the reasoning trail stays reviewable) */
-.react-flow__edge.edge-cut .react-flow__edge-text { fill: var(--text-dim); text-decoration: line-through; }
+/* a node is a dot + an always-on label; the focused node gets an accent fill. */
+.bnode { cursor: pointer; }
+.bnode-dot { fill: var(--panel-2); stroke: var(--text-dim); stroke-width: 1.5; }
+.bnode-label { fill: var(--text); font-size: 13px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
+.bnode:hover .bnode-dot { stroke: var(--accent); }
+.bnode:hover .bnode-label { fill: var(--text-h); }
+.bnode.focused .bnode-dot { fill: var(--accent); stroke: var(--accent); }
+.bnode.focused .bnode-label { fill: var(--text-h); }
 
-/* edge toolbar — appears when a red string is selected (cross out / remove) */
-.edge-toolbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px; padding: 6px 8px; z-index: 5;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-.edge-toolbar-label { font-size: 11px; color: var(--text-dim); padding: 0 6px;
-  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.etb-btn { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
-  border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 9px;
-  font-size: 12px; cursor: pointer; }
-.etb-btn:hover { border-color: var(--accent); }
-.etb-danger:hover { border-color: var(--up); color: var(--up); }
+/* edges: hairline grey dependency, red string (dashed) for hypotheses. */
+.bedge { stroke: var(--text-dim); stroke-width: 1; }
+.bedge.red { stroke: var(--up); stroke-width: 2; stroke-dasharray: 6 3; }
 
 /* relationship modal — drag node→node to draw a line */
 .modal-scrim { position: absolute; inset: 0; z-index: 10; display: flex;

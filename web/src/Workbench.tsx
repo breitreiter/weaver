@@ -294,7 +294,7 @@ export default function Workbench() {
 
       <div className="board-pane">
         {boardId
-          ? <Board boardId={boardId} board={board} reload={reloadBoard} focus={focus} onFocus={setFocus} />
+          ? <Board board={board} focus={focus} onFocus={setFocus} />
           : <div className="board-empty">
               <div className="board-empty-title">the board</div>
               <div>pinned findings hang here — the wall of red string.<br />pin something on the left to start one.</div>
