@@ -290,6 +290,52 @@ styled once, against the final drawer; and equal-thirds (Phase 0) never fights t
 SVG swap (Phase 1) because the redesign's computed `viewBox` auto-fits any pane
 width by construction.
 
+## Phase 0 — implementation checklist (locked)
+
+Decisions taken: timezone selector is **UTC + browser-Local only** (arbitrary
+zones need DST-offset math / a lib — deferred); the identity items **#1 contrast +
+#6 pin icon stay in Phase 2** (token/icon choices the house-style pass owns). Build
+order:
+
+1. **#11 logs FTS 500** *(backend; ship first — live crash)*. The bug: `MATCH {q}`
+   passes raw user text, so FTS5 parses metacharacters — a colon makes `api:` read
+   as a column filter → `no such column: api`. Fix = one shared sanitiser applied
+   at **all three** sites (`Program.cs:105-106` `/api/logs`, `369-370`
+   `/api/search`, `502-503` `/api/search/histogram`):
+   ```csharp
+   // FTS5 parses the MATCH value as a query expression; quote each whitespace
+   // token as a literal phrase (doubling embedded quotes) so ':' / parens /
+   // AND-OR-NOT are literal text. Result: plain AND-of-terms.
+   static string? FtsQuery(string? q) {
+       if (string.IsNullOrWhiteSpace(q)) return null;
+       var terms = q.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(t => '"' + t.Replace("\"", "\"\"") + '"');
+       var joined = string.Join(' ', terms);
+       return joined.Length == 0 ? null : joined;
+   }
+   ```
+   Semantics: multi-word → AND-of-terms (matches today's bare-term behaviour);
+   phrase search not exposed.
+2. **#2 drop "· N pinned"** — `Workbench.tsx:184-186` → render `` `board ${id}` ``
+   only (the honest count already lives in the evidence head).
+3. **#5 equal-thirds** — `App.css:7-12` flex `1.5/1.1/1` → `1/1/1`; fix the stale
+   `≥55%` comment at `Workbench.tsx:22`.
+4. **#9 no-items state (+ #10b)** — `Workbench.tsx:254` → name the active scope,
+   set facets, and window (from existing `scope`/`f` state) so the empty view
+   explains itself; doubles as the facet-brick mitigation.
+5. **#8 range picker** — accelerator buttons by from/to (full window / last 15m /
+   1h / 6h / clear), all writing the existing `from`/`to` facets.
+6. **#7 tz selector (UTC + Local)** — dropdown → `tz` state; one tz-aware formatter
+   for every timestamp render (`toLocaleString('sv-SE', {timeZone})` keeps the
+   `YYYY-MM-DD HH:mm:ss` shape); Local input converts via native `Date`, UTC
+   entered as-is; convert `from`/`to` to UTC at the API boundary (backend stays
+   UTC-naive). Fixes the badge alignment as a side effect.
+
+Items 2–4 are tiny (one pass); 5–6 share the time-controls area and go together.
+**Verification needs Joseph to restart the API (after step 1) and the web dev
+server (after the frontend changes)** — the agent builds + lints but doesn't
+start/kill servers.
+
 ## Coordination (docs that must move with this)
 
 - **`TODO.md` (left-panel-v2)** — the equal-thirds decision (#5) overrides the
