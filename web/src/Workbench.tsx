@@ -380,7 +380,7 @@ function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: 
           onClick={() => navigator.clipboard?.writeText(r.id)}>{r.id}</button>
         <button className={'pin' + (pinned ? ' done' : '')} onClick={onPin}
           title={pinned ? 'pinned to the board — click to pin again' : 'pin to the board'}>
-          <Icon name="graph_3" size={18} />
+          <Icon name="push_pin" size={18} />
         </button>
       </div>
       <div className="card-sub">

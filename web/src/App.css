@@ -85,7 +85,7 @@
 .badge-anomaly { background: #e0a35a; }
 .badge-log { background: #9aa5b1; }
 .badge-trace { background: #9d7cd8; }
-.badge-metric { background: #73c991; }
+.badge-metric { background: #56b6c2; }
 .badge-change { background: #e06c9f; }
 
 .pin { display: inline-flex; align-items: center; justify-content: center; padding: 0;
@@ -125,11 +125,12 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .bnode.focused .bnode-dot { fill: var(--accent); stroke: var(--accent); }
 .bnode.focused .bnode-label { fill: var(--text-h); }
 
-/* edges: hairline grey dependency; red string (straight, de-saturated) for the
-   hypotheses. Both stay quiet by default and pop bright when their evidence is
-   hovered (drawer → .dimmed → .lit, below). Solid line, never dashed. */
+/* edges: hairline grey dependency; the hypothesis string (straight, de-saturated)
+   in accent — NOT alarm-red (the "red string" is the internal name, not a shipped
+   colour). Both stay quiet by default and pop bright when their evidence is hovered
+   (drawer → .dimmed → .lit, below). Solid line, never dashed. */
 .bedge { stroke: var(--text-dim); stroke-width: 1; opacity: 0.5; }
-.bedge.red { stroke: var(--up); stroke-width: 1.5; opacity: 0.4; }
+.bedge.red { stroke: var(--accent); stroke-width: 1.5; opacity: 0.4; }
 
 /* hover-highlight (drawer → board): spotlight the lit subgraph, recede the rest.
    asymmetric easing via per-state durations — fast in (entering .dimmed), slow out
@@ -188,8 +189,8 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .rel-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px;
   padding: 1px 6px; border-radius: 4px; color: #0c1018; }
 .rel-badge-dependency { background: #9aa5b1; }
-.rel-badge-route { background: #73c991; }
-.rel-badge-temporal { background: var(--up); }
+.rel-badge-route { background: #7d93b0; }
+.rel-badge-temporal { background: var(--accent); }
 .rel-dir { font-size: 11px; color: var(--text-dim); }
 .rel-title { font-size: 12px; color: var(--text-h); margin-left: auto; }
 .rel-detail { font-size: 11px; color: var(--text-dim); }
@@ -222,7 +223,7 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .ev-item.kind-anomaly { --k: #e0a35a; }
 .ev-item.kind-log { --k: #9aa5b1; }
 .ev-item.kind-trace { --k: #9d7cd8; }
-.ev-item.kind-metric { --k: #73c991; }
+.ev-item.kind-metric { --k: #56b6c2; }
 .ev-item.kind-change { --k: #e06c9f; }
 .ev-item-ico { color: var(--k, var(--text-dim)); margin-top: 1px; flex-shrink: 0; }
 .ev-item-body { min-width: 0; flex: 1; }
@@ -247,9 +248,9 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .ev-string { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px;
   padding: 6px 8px; border-radius: 8px; background: var(--panel-2);
   border: 1px solid var(--border); font-size: 11px; }
-.ev-string.red { border-color: var(--up); }
+.ev-string.red { border-color: var(--accent); }
 .ev-string-ico { color: var(--text-dim); margin-top: 1px; flex-shrink: 0; }
-.ev-string.red .ev-string-ico { color: var(--up); }
+.ev-string.red .ev-string-ico { color: var(--accent); }
 .ev-string-body { min-width: 0; flex: 1; }
 .ev-string-dir { color: var(--text); font-size: 12px; }
 .ev-string-kind { color: var(--text-dim); margin-top: 2px; }
