@@ -13,26 +13,43 @@ import { type Board as BoardData } from './api'
 // edges are tool-supplied facts (neutral).
 const isRedString = (kind: string) => kind !== 'dependency' && kind !== 'route'
 
-// depth (dependency layer) is the LOW-cardinality axis — services rarely chain
-// more than a few deep — so map it to the scarce width; service fan-out (siblings
-// at a depth) is high-cardinality, so stack it down the abundant height. Fits the
-// narrow-but-tall board pane: a flat set of pins becomes a tall column, not a line.
-const COL_W = 210  // width per depth column (room for a dot + its label)
-const ROW_H = 40   // height per sibling row (dots stack cheaply)
-const MAX_ROWS = 8 // a depth taller than this spills into an adjacent sub-column
+// ONE NODE PER ROW, stacked straight down. The pane is narrow and every label is
+// horizontal text reaching rightward, so horizontal room is scarce — two nodes never
+// share a row (their labels would collide). Vertical room is abundant (tall pane), so
+// we spend it: a flat set of pins is a tidy column, a dependency chain an indented
+// staircase. Dependency depth is only a small x-INDENT — a hierarchy cue, not a
+// second axis competing for the width we don't have.
+const ROW_H = 44   // vertical pitch per node (every node gets its own row)
+const INDENT = 26  // x shift per dependency depth (the staircase step)
 const NODE_R = 7   // dot radius
 const PAD = 48     // viewBox padding around the content
 const CHAR_W = 7.5 // rough label glyph width, to keep labels inside the viewBox
+// floor on the viewBox: a sparse board (a single node) would otherwise be scaled up
+// to fill the pane (preserveAspectRatio meet) and render huge. Hold a minimum extent
+// so a small graph sits mid-pane at natural size. Tune to taste against the pane.
+const MIN_VB_W = 480
+const MIN_VB_H = 700
+
+// the lit subgraph for a drawer hover — a set of node + edge ids. Path-shaped from
+// day one (a trace lights many nodes + edges), never node-at-a-time. null = nothing
+// hovered (the field shows at full strength).
+export type Highlight = { nodeIds: string[]; edgeIds: string[] }
 
 type GNode = { id: string; x: number; y: number }
 type GEdge = { id: string; x1: number; y1: number; x2: number; y2: number; red: boolean }
 
-export default function Board({ board, focus, onFocus }: {
+export default function Board({ board, focus, highlight, onFocus }: {
   board: BoardData | null
   focus: string | null
+  highlight: Highlight | null
   onFocus: (svc: string) => void
 }) {
   const g = useMemo(() => (board ? buildGraph(board) : null), [board])
+  // sets for O(1) lit lookup; memoised so a board poll (same data) doesn't churn.
+  const lit = useMemo(() => ({
+    nodes: new Set(highlight?.nodeIds ?? []),
+    edges: new Set(highlight?.edgeIds ?? []),
+  }), [highlight])
 
   if (!g || g.nodes.length === 0) {
     return (
@@ -43,17 +60,20 @@ export default function Board({ board, focus, onFocus }: {
     )
   }
 
+  // spotlight, not paint: when something's hovered, dim the field and let the lit
+  // subgraph emerge. Dimming is recession (still legible), not concealment.
   return (
-    <svg className="board-svg" viewBox={g.viewBox} preserveAspectRatio="xMidYMid meet">
+    <svg className={'board-svg' + (highlight ? ' dimmed' : '')}
+      viewBox={g.viewBox} preserveAspectRatio="xMidYMid meet">
       <g className="board-edges">
         {g.edges.map(e => (
-          <line key={e.id} className={'bedge' + (e.red ? ' red' : '')}
+          <line key={e.id} className={'bedge' + (e.red ? ' red' : '') + (lit.edges.has(e.id) ? ' lit' : '')}
             x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} />
         ))}
       </g>
       <g className="board-nodes">
         {g.nodes.map(n => (
-          <g key={n.id} className={'bnode' + (n.id === focus ? ' focused' : '')}
+          <g key={n.id} className={'bnode' + (n.id === focus ? ' focused' : '') + (lit.nodes.has(n.id) ? ' lit' : '')}
             transform={`translate(${n.x},${n.y})`} onClick={() => onFocus(n.id)} role="button">
             <circle className="bnode-dot" r={NODE_R} />
             <text className="bnode-label" x={NODE_R + 6} dominantBaseline="middle">{n.id}</text>
@@ -91,7 +111,8 @@ function buildGraph(board: BoardData): { nodes: GNode[]; edges: GEdge[]; viewBox
   })
 
   // viewBox from node bounds + a right-hand allowance for the labels (svg clips to
-  // the viewBox), so the whole graph fits the panel by construction.
+  // the viewBox). Floored to a minimum extent and centred, so a sparse board renders
+  // at natural size rather than ballooning to fill the pane.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const n of nodes) {
     minX = Math.min(minX, n.x - NODE_R)
@@ -99,13 +120,17 @@ function buildGraph(board: BoardData): { nodes: GNode[]; edges: GEdge[]; viewBox
     maxX = Math.max(maxX, n.x + NODE_R + 6 + n.id.length * CHAR_W)
     maxY = Math.max(maxY, n.y + NODE_R)
   }
-  const vb = `${minX - PAD} ${minY - PAD} ${maxX - minX + PAD * 2} ${maxY - minY + PAD * 2}`
-  return { nodes, edges, viewBox: vb }
+  const contentW = maxX - minX, contentH = maxY - minY
+  const vbW = Math.max(contentW + PAD * 2, MIN_VB_W)
+  const vbH = Math.max(contentH + PAD * 2, MIN_VB_H)
+  const vbX = minX - (vbW - contentW) / 2
+  const vbY = minY - (vbH - contentH) / 2
+  return { nodes, edges, viewBox: `${vbX} ${vbY} ${vbW} ${vbH}` }
 }
 
-// Deterministic depth layering (longest-path) — never force-directed. Transposed
-// for the narrow-tall pane: depth runs left→right (few columns), siblings stack
-// down (many rows). A flat set of pins → one tall column, not a wide line.
+// Deterministic depth layering (longest-path) — never force-directed. Depth only
+// sets the horizontal indent; every node still takes its own row, read top→bottom in
+// (depth, name) order. A flat set of pins → a straight column; a chain → a staircase.
 function layout(
   services: string[],
   links: { from: string; to: string }[],
@@ -138,24 +163,10 @@ function layout(
     frontier = [...new Set(next)].sort()
   }
 
-  // bucket by depth; each depth is a COLUMN, its services stacked down the height.
-  // a depth taller than MAX_ROWS spills into an adjacent sub-column.
-  const bands = new Map<number, string[]>()
-  for (const s of services) {
-    const d = depth.get(s)!
-    ;(bands.get(d) ?? bands.set(d, []).get(d)!).push(s)
-  }
+  // one row per node, read top→bottom in (depth, name) order; x is the depth indent.
+  const ordered = [...services].sort((a, b) =>
+    (depth.get(a)! - depth.get(b)!) || (a < b ? -1 : a > b ? 1 : 0))
   const pos = new Map<string, { x: number; y: number }>()
-  let x = 0
-  for (const d of [...bands.keys()].sort((a, b) => a - b)) {
-    const band = bands.get(d)!.sort()
-    const subCols = Math.ceil(band.length / MAX_ROWS)
-    band.forEach((s, i) => {
-      const sub = Math.floor(i / MAX_ROWS)
-      const row = i % MAX_ROWS
-      pos.set(s, { x: x + sub * COL_W, y: row * ROW_H })
-    })
-    x += Math.max(1, subCols) * COL_W
-  }
+  ordered.forEach((s, row) => pos.set(s, { x: depth.get(s)! * INDENT, y: row * ROW_H }))
   return pos
 }

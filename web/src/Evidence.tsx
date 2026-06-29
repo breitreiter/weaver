@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Board as BoardData, type EvidenceItem, type MetricPoint, type MetricSeries } from './api'
 import { Icon } from './Icon'
+import { type Highlight } from './Board'
 
 // causal/temporal/custom edges are the operator's red string; dependency & route
 // edges are tool-supplied facts (neutral). Mirrors Board's predicate.
@@ -32,7 +33,7 @@ const EXPLORE: { scope: string; icon: string; label: string }[] = [
 
 type NodeGroup = { service: string; label?: string; evidence: EvidenceItem[] }
 
-export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService, onDeleteEdge, onAddRelationship }: {
+export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService, onDeleteEdge, onAddRelationship, onHighlight }: {
   board: BoardData | null
   focus: string | null
   onFocus: (svc: string) => void
@@ -41,9 +42,29 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
   onDeleteService: (service: string) => void
   onDeleteEdge: (edgeId: string) => void
   onAddRelationship: () => void
+  onHighlight: (h: Highlight | null) => void
 }) {
   const groups = useMemo(() => board ? groupByService(board) : [], [board])
   const evidenceCount = useMemo(() => groups.reduce((n, g) => n + g.evidence.length, 0), [groups])
+
+  // hover → light the matching subgraph on the board. Leaf-level handlers (cards,
+  // headers, relationship rows) only — not the whole section — so returning from a
+  // child into the section doesn't blink the highlight off. clear() on every leave.
+  const clear = () => onHighlight(null)
+  const liteNode = (service: string) => onHighlight({ nodeIds: [service], edgeIds: [] })
+  const liteEdge = (from: string, to: string, id: string) => onHighlight({ nodeIds: [from, to], edgeIds: [id] })
+  // a trace lights its whole on-board path: every participant pinned on the board
+  // plus the edges among them. serviceIds rides on the widened trace payload; older
+  // pins without it fall back to just the node the evidence hangs on.
+  const liteTrace = (service: string, ev: EvidenceItem) => {
+    const ids = (ev.payload as { serviceIds?: string[] } | undefined)?.serviceIds
+    if (!board || !ids || ids.length === 0) { liteNode(service); return }
+    const members = new Set(board.nodes.map(n => n.serviceId))
+    const parts = ids.filter(id => members.has(id))
+    const partSet = new Set(parts)
+    const edgeIds = board.edges.filter(e => partSet.has(e.from) && partSet.has(e.to)).map(e => e.id)
+    onHighlight({ nodeIds: parts.length ? parts : [service], edgeIds })
+  }
 
   // scroll the focused node's section into view when focus changes.
   const ref = useRef<HTMLDivElement>(null)
@@ -68,7 +89,8 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
           <section key={g.service} id={`ev-${cssId(g.service)}`}
             className={'ev-service' + (g.service === focus ? ' focused' : '')}
             onClick={() => onFocus(g.service)}>
-            <div className="ev-service-head">
+            <div className="ev-service-head"
+              onMouseEnter={() => real ? liteNode(g.service) : clear()} onMouseLeave={clear}>
               <Icon name="deployed_code" size={16} className="bnode-ico" />
               <span className="ev-service-title mono">{g.service}</span>
               {g.label && <span className="ev-service-label">{g.label}</span>}
@@ -95,7 +117,9 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
             {g.evidence.map(ev => {
               const searches = real ? itemSearches(ev) : []
               return (
-                <div key={ev.id} className={`ev-item kind-${ev.kind}`}>
+                <div key={ev.id} className={`ev-item kind-${ev.kind}`}
+                  onMouseEnter={() => !real ? clear() : ev.kind === 'trace' ? liteTrace(g.service, ev) : liteNode(g.service)}
+                  onMouseLeave={clear}>
                   <Icon name={KIND_ICON[ev.kind] ?? 'help'} size={18} className="ev-item-ico" />
                   <div className="ev-item-body">
                     {ev.label && <div className="ev-item-label">{ev.label}</div>}
@@ -135,7 +159,8 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
           </div>
           {board.edges.length === 0 && <div className="hint">no red string yet — relate two pins to draw one.</div>}
           {board.edges.map(e => (
-            <div key={e.id} className={'ev-string' + (isRedString(e.kind) ? ' red' : '')}>
+            <div key={e.id} className={'ev-string' + (isRedString(e.kind) ? ' red' : '')}
+              onMouseEnter={() => liteEdge(e.from, e.to, e.id)} onMouseLeave={clear}>
               <Icon name="trending_flat" size={16} className="ev-string-ico" />
               <div className="ev-string-body">
                 <div className="ev-string-dir mono">{e.from} → {e.to}</div>

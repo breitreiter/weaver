@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, type Facets, type SearchResult, type SearchParams, type Board as BoardData } from './api'
 import { Icon } from './Icon'
-import Board from './Board'
+import Board, { type Highlight } from './Board'
 import Evidence from './Evidence'
 import { RelationshipModal } from './RelationshipModal'
 
@@ -55,6 +55,8 @@ export default function Workbench() {
   const [f, setF] = useState<Record<string, string>>({})
   const [tz, setTz] = useState<Tz>('UTC')
   const [relOpen, setRelOpen] = useState(false)
+  // transient drawer→board hover-highlight — ephemeral UI state, not the URL/poll.
+  const [highlight, setHighlight] = useState<Highlight | null>(null)
   const [results, setResults] = useState<SearchResult[]>([])
   const [running, setRunning] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -294,7 +296,7 @@ export default function Workbench() {
 
       <div className="board-pane">
         {boardId
-          ? <Board board={board} focus={focus} onFocus={setFocus} />
+          ? <Board board={board} focus={focus} highlight={highlight} onFocus={setFocus} />
           : <div className="board-empty">
               <div className="board-empty-title">the board</div>
               <div>pinned findings hang here — the wall of red string.<br />pin something on the left to start one.</div>
@@ -303,7 +305,8 @@ export default function Workbench() {
 
       <Evidence board={board} focus={focus} onFocus={setFocus} onExplore={exploreService}
         onDeleteEvidence={removeEvidence} onDeleteService={removeService}
-        onDeleteEdge={removeEdge} onAddRelationship={() => setRelOpen(true)} />
+        onDeleteEdge={removeEdge} onAddRelationship={() => setRelOpen(true)}
+        onHighlight={setHighlight} />
 
       {relOpen && board && (
         <RelationshipModal members={board.nodes.map(n => n.serviceId)}

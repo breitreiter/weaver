@@ -746,10 +746,12 @@ static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
 {
     var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
     var hot = spans.FirstOrDefault();
-    // distinct services the trace crossed — lean metadata stored on the pin so the
-    // evidence drawer's "services in this trace" button can show the count without
-    // dragging the whole span list (or the participant nodes) onto the board.
-    var serviceCount = spans.Select(s => s.ServiceId).Distinct().Count();
+    // distinct services the trace crossed — lean metadata stored on the pin. The
+    // count drives the drawer's "services in this trace" button; the ids let the
+    // board's hover path-lens light every on-board participant + the edges among
+    // them (graph-redesign.md step 3) without re-fetching the span list.
+    var serviceIds = spans.Select(s => s.ServiceId).Distinct().ToList();
+    var serviceCount = serviceIds.Count;
     // pin lands ONE node — the hot hop. Other participants aren't dragged in (that
     // left orphan nodes with no stored reason); reach them via the trace card's
     // per-span search buttons. Spans still ride in the payload for those buttons.
@@ -759,7 +761,7 @@ static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
         hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
         new { trace = ToTraceDto(t), spans = spans.Select(ToSpanDto) },
         new PinTargetDto(nodeIds, new EvidenceRefDto("trace", "route:" + t.RequestTypeId, t.StartedAt,
-            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null, serviceCount })));
+            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null, serviceCount, serviceIds })));
 }
 
 static SearchResultDto MetricResult(Analysis.SeriesInput s)

@@ -118,16 +118,33 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 /* a node is a dot + an always-on label; the focused node gets an accent fill. */
 .bnode { cursor: pointer; }
 .bnode-dot { fill: var(--panel-2); stroke: var(--text-dim); stroke-width: 1.5; }
-.bnode-label { fill: var(--text); font-size: 13px;
+.bnode-label { fill: var(--text); font-size: 14px;
   font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
 .bnode:hover .bnode-dot { stroke: var(--accent); }
 .bnode:hover .bnode-label { fill: var(--text-h); }
 .bnode.focused .bnode-dot { fill: var(--accent); stroke: var(--accent); }
 .bnode.focused .bnode-label { fill: var(--text-h); }
 
-/* edges: hairline grey dependency, red string (dashed) for hypotheses. */
-.bedge { stroke: var(--text-dim); stroke-width: 1; }
-.bedge.red { stroke: var(--up); stroke-width: 2; stroke-dasharray: 6 3; }
+/* edges: hairline grey dependency; red string (straight, de-saturated) for the
+   hypotheses. Both stay quiet by default and pop bright when their evidence is
+   hovered (drawer → .dimmed → .lit, below). Solid line, never dashed. */
+.bedge { stroke: var(--text-dim); stroke-width: 1; opacity: 0.5; }
+.bedge.red { stroke: var(--up); stroke-width: 1.5; opacity: 0.4; }
+
+/* hover-highlight (drawer → board): spotlight the lit subgraph, recede the rest.
+   asymmetric easing via per-state durations — fast in (entering .dimmed), slow out
+   (returning to base). Dimming is recession (still legible), not concealment. */
+.bnode { transition: opacity 280ms ease; }
+.bedge { transition: opacity 280ms ease, stroke-width 160ms ease; }
+.bnode-dot { transition: stroke 160ms ease, fill 160ms ease; }
+.bnode-label { transition: fill 160ms ease; }
+.board-svg.dimmed .bnode, .board-svg.dimmed .bedge { transition: opacity 140ms ease; }
+.board-svg.dimmed .bnode { opacity: 0.22; }
+.board-svg.dimmed .bedge { opacity: 0.10; }
+.board-svg.dimmed .bnode.lit, .board-svg.dimmed .bedge.lit { opacity: 1; }
+.board-svg.dimmed .bedge.lit.red { stroke-width: 2.5; }
+.board-svg.dimmed .bnode.lit .bnode-dot { stroke: var(--accent); }
+.board-svg.dimmed .bnode.lit .bnode-label { fill: var(--text-h); }
 
 /* relationship modal — drag node→node to draw a line */
 .modal-scrim { position: absolute; inset: 0; z-index: 10; display: flex;
