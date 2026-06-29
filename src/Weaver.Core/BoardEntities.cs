@@ -14,6 +14,14 @@ public class BoardEntity
     public string Id { get; set; } = "";
     public string Title { get; set; } = "";
     public string CreatedAt { get; set; } = "";
+
+    // The co-edited document — the board's synthesis surface (RCA / PIR / plan),
+    // co-written by the human and the agent. Markdown is the canonical artifact.
+    // DocVersion is a monotonic counter for optimistic concurrency: a writer sends
+    // the version it last saw; if the server has moved on, edits are 3-way merged
+    // (DocMerge) using the writer's base text as ancestor. See co-edit-document.md.
+    public string Doc { get; set; } = "";
+    public int DocVersion { get; set; }
 }
 
 // A service placed on the board. One per (board, service). Pinning the same

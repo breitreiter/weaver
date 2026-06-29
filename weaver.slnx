@@ -5,4 +5,7 @@
     <Project Path="src/Weaver.Contracts/Weaver.Contracts.csproj" />
     <Project Path="src/Weaver.Core/Weaver.Core.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Weaver.Core.Tests/Weaver.Core.Tests.csproj" />
+  </Folder>
 </Solution>

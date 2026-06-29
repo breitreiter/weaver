@@ -110,7 +110,14 @@ public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At,
 public record BoardNodeDto(string ServiceId, string? Label, IReadOnlyList<EvidenceItemDto> Evidence);
 public record BoardEdgeDto(string Id, string From, string To, string Kind, string? Label, string DrawnBy, bool CrossedOut);
 public record BoardDto(string Id, string Title, string CreatedAt,
-    IReadOnlyList<BoardNodeDto> Nodes, IReadOnlyList<BoardEdgeDto> Edges);
+    IReadOnlyList<BoardNodeDto> Nodes, IReadOnlyList<BoardEdgeDto> Edges,
+    string Doc, int DocVersion);
+
+// PUT the co-edited document. BaseVersion = the version the writer last saw;
+// BaseText = what it was editing from (the merge ancestor when the server has
+// moved on). Conflict (in DocDto) means the writer should refetch + re-diff.
+public record DocPutReq(int BaseVersion, string? BaseText, string? Text);
+public record DocDto(string Doc, int DocVersion, bool Conflict);
 
 // request bodies
 public record CreateBoardReq(string? Title);

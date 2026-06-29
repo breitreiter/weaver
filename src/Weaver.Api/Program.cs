@@ -179,7 +179,35 @@ app.MapGet("/api/boards/{id}", (BoardsDbContext db, string id) =>
     var nodeDtos = nodes.Select(n => new BoardNodeDto(
         n.ServiceId, n.Label, evidence[n.ServiceId].Select(ToEvidenceDto).ToList())).ToList();
     var edges = db.BoardEdges.AsNoTracking().Where(e => e.BoardId == id).OrderBy(e => e.CreatedAt).ToList().Select(ToBoardEdgeDto).ToList();
-    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, nodeDtos, edges));
+    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, nodeDtos, edges, b.Doc, b.DocVersion));
+});
+
+// The co-edited document. Optimistic concurrency: if the writer's BaseVersion still
+// matches, accept as-is; otherwise 3-way merge the writer's edits onto the current
+// server text using BaseText as ancestor (DocMerge). A merge that touches contested
+// lines returns Conflict=true with the current text so the writer refetches + re-diffs
+// — we never silently auto-resolve overlapping edits. See co-edit-document.md.
+app.MapPut("/api/boards/{id}/doc", (BoardsDbContext db, string id, DocPutReq req) =>
+{
+    var b = db.Boards.FirstOrDefault(x => x.Id == id);
+    if (b is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
+    var incoming = req.Text ?? "";
+
+    if (req.BaseVersion == b.DocVersion)
+    {
+        b.Doc = incoming;
+        b.DocVersion++;
+        db.SaveChanges();
+        return Results.Ok(new DocDto(b.Doc, b.DocVersion, false));
+    }
+
+    var merge = DocMerge.Merge(req.BaseText ?? "", b.Doc, incoming);
+    if (!merge.Clean)
+        return Results.Conflict(new DocDto(b.Doc, b.DocVersion, true));
+    b.Doc = merge.Text;
+    b.DocVersion++;
+    db.SaveChanges();
+    return Results.Ok(new DocDto(b.Doc, b.DocVersion, false));
 });
 
 // Pin = ensure a node per service (idempotent — a service already on the board is
