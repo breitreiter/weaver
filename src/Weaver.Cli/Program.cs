@@ -44,8 +44,7 @@ try
         case "board": Board(); break;
         case "pin": Pin(); break;
         case "unpin": Unpin(); break;
-        case "link": Link(); break;
-        case "crossout": CrossOut(); break;
+        case "doc": Doc(); break;
         case "help" or "" or null: Help(); break;
         default: Console.Error.WriteLine($"unknown verb '{verb}'. try: weaver help"); Environment.Exit(2); break;
     }
@@ -88,8 +87,10 @@ void Help()
               [--as K --aspect A]         service + manual evidence (--note/--evidence/--at)
           unpin <evidence-id>           drop one finding
           unpin <service> --all         remove a service, its evidence + its strings
-          link <a> <b> --as "explains"  draw a red-string edge between two services
-          crossout <edge|a b> [--restore]  cut a red string (kept, struck through)
+          doc show [id|url]             print the co-edited document (+ version)
+          doc edit --find "x" --replace "y"  anchored find/replace — re-anchors on
+                                          a concurrent edit, never blind offsets
+          doc append "text"             add text to the end of the document
 
         common flags: --json (raw)  --raw (series points)  --limit N
           facets: --grep q  --subsystem S  --kind K  --team T  --level L
@@ -458,7 +459,7 @@ void Board()
             Console.WriteLine($"  {e.Id}  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]"
                 + (e.CrossedOut ? "  (cut)" : ""));
     }
-    Hint("weaver pin <id|service>", "weaver link <a> <b> --as \"explains\"", "weaver board review   (do my strings hold up?)");
+    Hint("weaver pin <id|service>", "weaver doc show", "weaver doc edit --find \"…\" --replace \"…\"");
 }
 
 // "challenge my wall" — for each red string, list the facts beneath it; flag any
@@ -544,45 +545,75 @@ void Unpin()
     Hint("weaver board show");
 }
 
-void Link()
+// The co-edited document — Claude's hands on the board's synthesis surface.
+//   doc show   — print the current document + version
+//   doc edit   — an ANCHORED find/replace (the discipline from co-edit-document.md:
+//                small, localized, context-anchored edits — never blind offsets)
+//   doc append — add text to the end (the common "record a finding" move)
+void Doc()
 {
-    var id = ResolveBoard();
-    // soft resolution: correct a real service typo, but let edge-subject ids
-    // (e.g. an anomaly pinned on an edge) pass through unchanged.
-    var from = ResolveService(argv.Need(0, "from service"), strict: false);
-    var to = ResolveService(argv.Need(1, "to service"), strict: false);
-    var c = api.Post<CreatedDto>($"/api/boards/{id}/edges",
-        new { from, to, kind = argv.Opt("kind") ?? "causal", label = argv.Opt("as") ?? argv.Opt("label"), drawnBy = "agent" });
-    Console.WriteLine($"linked {from} -> {to}{(argv.Opt("as") is { } a ? $"  ({a})" : "")}   edge {c.Id}");
-    Hint($"weaver crossout {c.Id}   (cut it later)", "weaver board show");
-}
+    var sub = argv.Pos.Count > 0 ? argv.Pos[0] : "show";
 
-// Cross out (or restore) a red string — by edge id, or by the service pair
-// (what a human actually says: "cut payments-db to checkout-api").
-void CrossOut()
-{
-    var id = ResolveBoard();
-    var restore = argv.Has("restore");
-    var edge = argv.Pos.Count >= 2 ? ResolveEdgeByPair(id, argv.Pos[0], argv.Pos[1]) : argv.Need(0, "edge id, or two services");
-    api.Post<BoardEdgeDto>($"/api/boards/{id}/edges/{edge}/crossout", new { crossedOut = !restore });
-    Console.WriteLine(restore ? $"restored {edge}" : $"crossed out {edge}");
-    Hint("weaver board show");
-}
-
-// resolve the edge between two services on a board; if several, list them and bail.
-string ResolveEdgeByPair(string boardId, string a, string b)
-{
-    var edges = api.Get<BoardDto>($"/api/boards/{boardId}").Edges
-        .Where(e => (e.From == a && e.To == b) || (e.From == b && e.To == a)).ToList();
-    if (edges.Count == 0) { Console.Error.WriteLine($"weaver: no edge between {a} and {b}."); Environment.Exit(2); }
-    if (edges.Count > 1)
+    if (sub == "show")
     {
-        Console.Error.WriteLine($"weaver: {edges.Count} edges between {a} and {b} — pass an edge id:");
-        foreach (var e in edges) Console.Error.WriteLine($"  {e.Id}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")})");
-        Environment.Exit(2);
+        var b = api.Get<BoardDto>($"/api/boards/{ResolveBoard(posIndex: 1)}");
+        if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+        Console.WriteLine($"# doc — board {b.Id} (v{b.DocVersion})");
+        Console.WriteLine(string.IsNullOrEmpty(b.Doc) ? "(empty — nothing written yet)" : b.Doc);
+        return;
     }
-    return edges[0].Id;
+
+    var id = ResolveBoard();
+
+    if (sub == "append")
+    {
+        var text = argv.Opt("text") ?? string.Join(" ", argv.Pos.Skip(1));
+        if (string.IsNullOrEmpty(text)) { Console.Error.WriteLine("weaver: doc append needs --text \"…\" (or trailing words)."); Environment.Exit(2); return; }
+        EditDoc(id, cur => cur.Length == 0 ? text : cur.TrimEnd('\n') + "\n\n" + text, "appended");
+        return;
+    }
+
+    if (sub == "edit")
+    {
+        var find = argv.Opt("find");
+        var replace = argv.Opt("replace") ?? "";
+        if (string.IsNullOrEmpty(find)) { Console.Error.WriteLine("weaver: doc edit needs --find \"…\" [--replace \"…\"]."); Environment.Exit(2); return; }
+        EditDoc(id, cur =>
+        {
+            var i = cur.IndexOf(find, StringComparison.Ordinal);
+            if (i < 0) throw new ApiError($"anchor not found: \"{Trunc(find)}\". `doc show` first and copy exact text.");
+            if (cur.IndexOf(find, i + find.Length, StringComparison.Ordinal) >= 0)
+                throw new ApiError($"anchor \"{Trunc(find)}\" matches more than once — add surrounding context to make it unique.");
+            return cur[..i] + replace + cur[(i + find.Length)..];
+        }, "edited");
+        return;
+    }
+
+    Console.Error.WriteLine($"weaver: unknown doc subcommand '{sub}'. try: doc show | doc edit | doc append");
+    Environment.Exit(2);
 }
+
+// Apply a pure text transform to the doc and PUT it (3-way-merged server-side).
+// On a conflict — a concurrent human edit touched the SAME lines — we re-fetch and
+// re-apply the transform (re-anchoring), never blind-retrying the stale patch. If
+// the transform's anchor is gone after that edit, it surfaces (the human reworked
+// exactly there — their call to make). Disjoint concurrent edits merge silently.
+void EditDoc(string id, Func<string, string> transform, string did)
+{
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        var b = api.Get<BoardDto>($"/api/boards/{id}");
+        var next = transform(b.Doc);
+        if (next == b.Doc) { Console.WriteLine("no change."); return; }
+        var res = api.Put<DocDto>($"/api/boards/{id}/doc",
+            new { baseVersion = b.DocVersion, baseText = b.Doc, text = next });
+        if (!res.Conflict) { Console.WriteLine($"{did} — board {id} now at v{res.DocVersion}"); return; }
+        // conflict: loop re-fetches the latest text and re-anchors the transform.
+    }
+    throw new ApiError("doc edit kept colliding with concurrent edits — `doc show` and try again.");
+}
+
+static string Trunc(string s) => s.Length <= 40 ? s.Replace("\n", "⏎") : s[..40].Replace("\n", "⏎") + "…";
 
 string ResolveBoard(int posIndex = -1)
 {
@@ -753,6 +784,23 @@ sealed class Api
         LastRaw = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         if (resp.StatusCode == HttpStatusCode.NotFound) throw new ApiError(ErrText(LastRaw) ?? "not found");
         if (!resp.IsSuccessStatusCode) throw new ApiError($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {LastRaw}");
+        return JsonSerializer.Deserialize<T>(LastRaw, J) ?? throw new ApiError("empty response");
+    }
+
+    // 409 Conflict is an EXPECTED outcome here: the doc PUT returns a typed body
+    // (DocDto with Conflict=true) so the caller can re-fetch and re-anchor. Only
+    // other non-success codes throw.
+    public T Put<T>(string path, object body)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(body, J), Encoding.UTF8, "application/json");
+        HttpResponseMessage resp;
+        try { resp = http.PutAsync(path, content).GetAwaiter().GetResult(); }
+        catch (HttpRequestException) { throw new ApiError($"can't reach the API at {http.BaseAddress}. Is it running?"); }
+
+        LastRaw = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        if (resp.StatusCode == HttpStatusCode.NotFound) throw new ApiError(ErrText(LastRaw) ?? "not found");
+        if (!resp.IsSuccessStatusCode && resp.StatusCode != HttpStatusCode.Conflict)
+            throw new ApiError($"{(int)resp.StatusCode} {resp.ReasonPhrase}: {LastRaw}");
         return JsonSerializer.Deserialize<T>(LastRaw, J) ?? throw new ApiError("empty response");
     }
 
