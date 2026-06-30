@@ -244,7 +244,7 @@ app.MapPost("/api/boards/{id}/pin", (BoardsDbContext db, string id, PinReq req) 
                 Id = NewId(), BoardId = id, ServiceId = services[0],
                 Kind = ev.Kind, Aspect = ev.Aspect, At = ev.At,
                 Payload = ev.Payload is null ? "{}" : JsonSerializer.Serialize(ev.Payload),
-                Label = req.Label, CreatedAt = NowIso(),
+                Label = req.Label, RefId = ev.RefId, CreatedAt = NowIso(),
             });
     }
     db.SaveChanges();
@@ -700,7 +700,7 @@ static (List<Analysis.SeriesInput> series, DateTimeOffset split) LoadSeries(Weav
 static EvidenceItemDto ToEvidenceDto(EvidenceEntity e)
 {
     var payload = ParseJson(e.Payload);
-    return new(e.Id, e.Kind, e.Aspect, e.At, payload, e.Label, EvidenceSummary(e.Kind, payload));
+    return new(e.Id, e.Kind, e.Aspect, e.At, payload, e.Label, EvidenceSummary(e.Kind, payload), e.RefId);
 }
 static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
     new(e.Id, e.FromService, e.ToService, e.Kind, e.Label, e.DrawnBy, e.CrossedOut);
@@ -757,18 +757,18 @@ static SearchResultDto ServiceResult(ServiceEntity s) =>
 
 static SearchResultDto LogResult(LogEventEntity l) =>
     new("log", "log:" + l.Id, l.Message, $"{l.Level} · {l.ServiceId} · {l.Ts}", ToLogDto(l),
-        new PinTargetDto([l.ServiceId], new EvidenceRefDto("log", l.TemplateId, l.Ts, ToLogDto(l))));
+        new PinTargetDto([l.ServiceId], new EvidenceRefDto("log", l.TemplateId, l.Ts, ToLogDto(l), RefId: "log:" + l.Id)));
 
 static SearchResultDto ChangeResult(ChangeEventDto c) =>
     new("change", "ce:" + c.Id, c.Summary,
         $"{c.Kind} · {c.Ts}" + (c.TargetId is not null ? " · " + c.TargetId : " · fleet-wide"), c,
-        new PinTargetDto(c.TargetId is not null ? [c.TargetId] : [], new EvidenceRefDto("change", c.Kind, c.Ts, c)));
+        new PinTargetDto(c.TargetId is not null ? [c.TargetId] : [], new EvidenceRefDto("change", c.Kind, c.Ts, c, RefId: "ce:" + c.Id)));
 
 static SearchResultDto AnomalyResult(AnomalyDto a) =>
     new("anomaly", $"an:{a.SubjectId}:{a.Metric}",
         $"{a.SubjectId}  {a.Metric}  {(a.DeltaPct > 0 ? "+" : "")}{a.DeltaPct}%",
         $"z {a.Z} · {a.Direction} · onset {a.OnsetTs}", a,
-        new PinTargetDto([a.SubjectId], new EvidenceRefDto("anomaly", a.Metric, a.OnsetTs, a)));
+        new PinTargetDto([a.SubjectId], new EvidenceRefDto("anomaly", a.Metric, a.OnsetTs, a, RefId: $"an:{a.SubjectId}:{a.Metric}")));
 
 static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
 {
@@ -789,7 +789,7 @@ static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
         hot is not null ? $"hot hop {hot.ServiceId} ({hot.SelfMs}ms self)" : t.Id[..8],
         new { trace = ToTraceDto(t), spans = spans.Select(ToSpanDto) },
         new PinTargetDto(nodeIds, new EvidenceRefDto("trace", "route:" + t.RequestTypeId, t.StartedAt,
-            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null, serviceCount, serviceIds })));
+            new { trace = ToTraceDto(t), hot = hot is not null ? ToSpanDto(hot) : null, serviceCount, serviceIds }, RefId: "tr:" + t.Id)));
 }
 
 static SearchResultDto MetricResult(Analysis.SeriesInput s)
@@ -798,7 +798,7 @@ static SearchResultDto MetricResult(Analysis.SeriesInput s)
     return new SearchResultDto(
         "metric", $"me:{s.Id}:{s.Metric}", $"{s.Id}  {s.Metric}", tr.ShapeCode,
         new { tr.ShapeCode, tr.Prose, tr.Min, tr.Max, tr.Mean },
-        new PinTargetDto([s.Id], new EvidenceRefDto("metric", s.Metric, null, new { tr.ShapeCode, tr.Prose })));
+        new PinTargetDto([s.Id], new EvidenceRefDto("metric", s.Metric, null, new { tr.ShapeCode, tr.Prose }, RefId: $"me:{s.Id}:{s.Metric}")));
 }
 static string NewId() => Guid.NewGuid().ToString("N")[..8];
 static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");

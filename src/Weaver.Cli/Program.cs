@@ -447,9 +447,11 @@ void Board()
     {
         Console.WriteLine($"  {n.ServiceId,-20} {n.Label}");
         foreach (var ev in n.Evidence)
-            // lead with the evidence id — it's the handle `unpin` takes.
+            // lead with the storage id (the `unpin` handle); trailing @ref is the
+            // document handle (what you write into the doc to reference this finding).
             Console.WriteLine($"      {ev.Id}  {ev.Kind,-8} {ev.Aspect}"
-                + (string.IsNullOrWhiteSpace(ev.Summary) ? (ev.Label is { } l ? "  " + l : "") : "  " + ev.Summary));
+                + (string.IsNullOrWhiteSpace(ev.Summary) ? (ev.Label is { } l ? "  " + l : "") : "  " + ev.Summary)
+                + (ev.RefId is { } rid ? $"   @{rid}" : ""));
     }
     if (b.Edges.Count > 0)
     {

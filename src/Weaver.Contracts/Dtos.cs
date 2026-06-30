@@ -106,7 +106,10 @@ public record RelationshipsDto(string A, string B, IReadOnlyList<RelationshipDto
 // Summary is the one-line, kind-aware rendering of the payload — computed
 // server-side so the CLI's `board show` and the UI's evidence card read the SAME
 // words. (Both used to render this independently; the UI copy is retired.)
-public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At, JsonElement? Payload, string? Label, string Summary);
+// RefId is the canonical TYPED id (an:svc:metric, tr:…, log:…) — the same identity
+// used to pin from the CLI and to `@`-reference the finding in the document. Id is
+// the opaque storage handle (what `unpin`/delete take); RefId is the shared one.
+public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At, JsonElement? Payload, string? Label, string Summary, string? RefId);
 public record BoardNodeDto(string ServiceId, string? Label, IReadOnlyList<EvidenceItemDto> Evidence);
 public record BoardEdgeDto(string Id, string From, string To, string Kind, string? Label, string DrawnBy, bool CrossedOut);
 public record BoardDto(string Id, string Title, string CreatedAt,
@@ -147,8 +150,10 @@ public record FacetsDto(
     IReadOnlyList<string> TraceStatuses,
     IReadOnlyList<string> ChangeKinds);
 
-// What to pin: the node(s) + (optionally) the evidence to layer onto them.
-public record EvidenceRefDto(string Kind, string Aspect, string? At, object? Payload);
+// What to pin: the node(s) + (optionally) the evidence to layer onto them. RefId
+// carries the finding's canonical typed id so the board keeps one identity per
+// finding across every surface (see EvidenceItemDto).
+public record EvidenceRefDto(string Kind, string Aspect, string? At, object? Payload, string? RefId = null);
 public record PinTargetDto(IReadOnlyList<string> NodeIds, EvidenceRefDto? Evidence);
 
 // A single typed, self-describing, pre-resolved-for-pinning search result.

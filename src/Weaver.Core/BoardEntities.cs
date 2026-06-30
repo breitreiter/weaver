@@ -47,6 +47,7 @@ public class EvidenceEntity
     public string? At { get; set; }                // time t or window the interest is about
     public string Payload { get; set; } = "{}";    // json snapshot that justified the pin
     public string? Label { get; set; }
+    public string? RefId { get; set; }             // canonical typed id (an:svc:metric, tr:…) — the @-reference handle
     public string CreatedAt { get; set; } = "";
 }
 
