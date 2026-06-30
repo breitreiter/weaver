@@ -1,14 +1,16 @@
 # weaver
 
-Investigate a service graph from observed telemetry — with an AI agent as your
-research partner.
+Investigate a microservice system from observed telemetry — with an AI agent as
+your research partner.
 
-weaver is a small CLI, an HTTP API, and a web "board" for working through an
+weaver is a small CLI, an HTTP API, and a web workspace for working through an
 incident in a microservice system: you forage through metrics, logs, and traces,
-correlate what moved against what, and pin your findings to a shared wall with
-red strings between them. The twist is that it's built to be driven *with an
-agent* — you and Claude (or Cursor, or whatever you use) work the same board
-together, one as the investigator, one as the tireless forager.
+pin the findings that matter, and write up what's happening in a single **living
+document** — co-edited, in real time, with an AI agent. The document *is* the
+investigation, and it flexes to the moment: an RCA while it's burning, a
+post-incident review once it's out, a design note when nothing's on fire. You and
+Claude (or Cursor, or whatever you use) work the same document together — one as
+the writer of record, one as the tireless forager and drafting partner.
 
 > **Maturity, honestly.** This is an **interface concept / prototype**, not a
 > production observability tool. It does not ingest your real telemetry, connect
@@ -30,18 +32,20 @@ Most observability tools are built to answer for you — a dashboard, an alert, 
 - **Everything interpretive is computed live.** Anomalies, onset timelines, blast
   radius — all calculated on the fly from the raw data, by shared code that backs
   both the CLI and the web UI, so the two never disagree.
-- **It enumerates; it never concludes.** Every command lists facts. The causal
-  claim — "this *caused* that" — exists only as an explicit, human-drawn red
-  string on the board, labeled as a hypothesis. The tool is a toolkit over a
-  mystery, not an oracle. The judgment stays with the person who has skin in the
+- **It enumerates; you conclude.** Every command lists facts; none emit a verdict,
+  a score, or an "AI root cause." The causal claim — "this *caused* that" — is
+  written, in prose, in the shared document. The agent can draft and argue it, but
+  the conclusion is reached through the back-and-forth between you, and *you* own
+  when the analysis is final and what it says. The tool is a toolkit over a
+  mystery, not an oracle — the judgment stays with the person who has skin in the
   game.
 
 ## The intended usage loop
 
 The agent does **not** live inside weaver. It lives in whatever harness it already
 likes — a coding agent in your terminal, an editor assistant, a chat — and it
-reaches weaver through the **CLI as a tool surface**. You keep the web board open;
-the agent drives the CLI; you both see the same wall.
+reaches weaver through the **CLI as a tool surface**. You keep the web workspace
+open; the agent drives the CLI; you both see the same document.
 
 A session looks like this:
 
@@ -50,21 +54,26 @@ A session looks like this:
 2. **The agent forages.** It runs `weaver search`, `traces`, `service`,
    `evidence` — pulling the tedious, parallelizable legwork — and narrates what it
    finds in the ids you both can see.
-3. **You both build the wall.** Findings get `pin`ned by their typed id; proposed
-   causes get drawn as `link`s (red strings) with hypothesis labels. The agent's
-   pins show up on your screen within a poll.
-4. **You adjudicate.** The agent argues both sides, runs `board review` to show
-   what each string is grounded on, and proposes crossouts — but the call to roll
+3. **You both write it up.** Findings get `pin`ned by their typed id, and you and
+   the agent co-edit the document — it appends findings, drafts the timeline, and
+   proposes a read; you correct, reframe, and decide. Findings are referenced in
+   the prose by that same typed id (`@an:checkout:latency_p99`), so every claim can
+   point back at the fact that grounds it. Edits from either side land live, merged
+   line-by-line.
+4. **You decide it's done.** The agent assembles and argues both sides, but the
+   conclusion emerges from the conversation in the document — and the call to roll
    back, page a team, or close the incident is yours.
 
-The agent is a *support role*: a perfect-recall forager and rubber-duck that never
-loses the thread, not the investigator of record. The decisive facts in a real
-incident are often out-of-band — what a deploy *meant*, whether a sale was running
-— and those live with people, not in telemetry. weaver is honest about that line.
+The agent is a *support role*: a perfect-recall forager and drafting partner that
+never loses the thread, not the investigator of record. The decisive facts in a
+real incident are often out-of-band — what a deploy *meant*, whether a sale was
+running — and those live with people, not in telemetry. An agent that concluded
+from the data alone would confidently pick the plausible coincidence; weaver is
+built so the human brings the tie-break.
 
-The contract between the agent and your screen is **URLs**: a board is addressed by
-a `/view?board=…` URL that works anywhere a board id is accepted. Paste it to the
-agent and you're both on the same board.
+The contract between the agent and your screen is **URLs**: the document is
+addressed by a `/view?board=…` URL that works anywhere a board id is accepted.
+Paste it to the agent and you're both on the same document.
 
 ## Surfaces
 
@@ -73,22 +82,23 @@ agent and you're both on the same board.
   - *forage* — `search`, `facets`, `service`, `metrics`, `logs`, `traces`,
     `trace`, `evidence`
   - *correlate* — `anomalies`, `timeline`, `blast-radius`, `relationships`
-  - *build the wall* — `board`, `pin`, `unpin`, `link`, `crossout`
+  - *write it up* — `board`, `pin`, `unpin`, `doc show`, `doc edit`, `doc append`
 - **HTTP API** (`src/Weaver.Api`) — serves the same computed primitives and owns
-  the boards. Default `http://localhost:5180`.
-- **Web board** (`web/`) — a React/Vite surface for viewing the graph and the
-  pinned wall. Default `http://localhost:5173`.
+  the documents (boards). Default `http://localhost:5180`.
+- **Web workspace** (`web/`) — a React/Vite surface: the forage panel, the
+  co-edited document (CodeMirror) at its centre, and a rail of pinned evidence.
+  Default `http://localhost:5173`.
 
 ## Getting started
 
-**Prerequisites:** .NET SDK (for the API + CLI) and Node.js (for the web board).
+**Prerequisites:** .NET SDK (for the API + CLI) and Node.js (for the web workspace).
 Python 3 only if you want to regenerate datasets.
 
 ```bash
 # 1. API (boards + computed telemetry primitives) — http://localhost:5180
 dotnet run --project src/Weaver.Api
 
-# 2. Web board — http://localhost:5173
+# 2. Web workspace — http://localhost:5173
 cd web && npm install && npm run dev
 
 # 3. CLI — run against the API
@@ -110,7 +120,7 @@ Configuration is via environment variables:
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `WEAVER_API` | `http://localhost:5180` | API the CLI talks to |
-| `WEAVER_WEB` | `http://localhost:5173` | web board base (for printed URLs) |
+| `WEAVER_WEB` | `http://localhost:5173` | web workspace base (for printed URLs) |
 | `WEAVER_BOARD` | _(unset)_ | current board id/URL, so you can omit `--board` |
 
 ## Data
@@ -127,9 +137,10 @@ topology YAML. Nothing here is real production data.
 src/
   Weaver.Cli        the command surface (the agent's tool)
   Weaver.Api        HTTP API: boards + live-computed primitives
-  Weaver.Core       the analysis primitives, shared by CLI + API
+  Weaver.Core       the analysis primitives + the document 3-way merge
   Weaver.Contracts  shared DTOs
-web/                React/Vite board UI
+web/                React/Vite workspace (forage + co-edited document)
+tests/              unit tests (e.g. the document merge)
 tools/datagen/      synthetic dataset generator
 data/               SQLite databases + topology definitions
 project/            design docs, plans, and constitution
@@ -141,10 +152,10 @@ This is a working prototype with sharp edges and a deliberately narrow scope:
 
 - runs only against the bundled synthetic datasets; no real ingestion path
 - single-node, local-first; no auth, no multi-tenant, no scale story
-- the board model and CLI are still settling — verbs and ids may shift
+- the document model and CLI are still settling — verbs and ids may shift
 - it is a study of an *interaction*, not a complete observability product
 
 If you take one thing from it, take the interaction model: a human and an agent
-investigating a shared, enumerated, never-concludes-for-you board — not a tool
-that hands you an answer.
+co-writing a shared, evidence-grounded, never-concludes-for-you document — not a
+tool that hands you an answer.
 </content>
