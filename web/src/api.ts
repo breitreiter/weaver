@@ -38,11 +38,17 @@ export interface Relationships { a: string; b: string; relationships: Relationsh
 // A board node is a service on the wall; evidence (anomaly/log/trace/metric/
 // change) layers onto it. Edges connect services. No "item" — service or evidence.
 // summary is computed server-side (one renderer for CLI `board show` + the UI card)
-export interface EvidenceItem { id: string; kind: string; aspect: string; at?: string | null; payload?: unknown; label?: string; summary: string }
+// refId = the canonical typed id (an:svc:metric, tr:…) — the @-reference handle in
+// the document. id is the opaque storage handle (delete/unpin). Same identity as the CLI.
+export interface EvidenceItem { id: string; kind: string; aspect: string; at?: string | null; payload?: unknown; label?: string; summary: string; refId?: string | null }
 export interface BoardNode { serviceId: string; label?: string; evidence: EvidenceItem[] }
 export interface BoardEdge { id: string; from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean }
 export interface LinkInput { from: string; to: string; kind?: string; label?: string; drawnBy?: string }
-export interface Board { id: string; title: string; createdAt: string; nodes: BoardNode[]; edges: BoardEdge[] }
+export interface Board { id: string; title: string; createdAt: string; nodes: BoardNode[]; edges: BoardEdge[]; doc: string; docVersion: number }
+// PUT /doc result: the authoritative text + version after an optimistic write.
+// conflict=true means the writer's edit touched lines a concurrent edit also
+// changed — it was NOT applied; the writer should re-base on `doc` and retry.
+export interface DocResult { doc: string; docVersion: number; conflict: boolean }
 export interface Created { id: string; url: string }
 export interface PinInput { serviceIds: string[]; evidence?: EvidenceRef | null; label?: string }
 
@@ -53,7 +59,7 @@ export interface Facets {
   metrics: string[]; logLevels: string[]; logTemplates: string[]
   routes: string[]; traceStatuses: string[]; changeKinds: string[]
 }
-export interface EvidenceRef { kind: string; aspect: string; at?: string | null; payload?: unknown }
+export interface EvidenceRef { kind: string; aspect: string; at?: string | null; payload?: unknown; refId?: string | null }
 export interface PinTarget { nodeIds: string[]; evidence?: EvidenceRef | null }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface SearchResult { type: string; id: string; title: string; subtitle: string; payload?: any; pin: PinTarget }
@@ -89,6 +95,18 @@ async function del<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// 409 Conflict is an EXPECTED outcome for the doc PUT — it carries a typed body
+// (DocResult with conflict=true), so only other non-2xx codes throw.
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch('/api' + path, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok && res.status !== 409) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
+  return res.json() as Promise<T>
+}
+
 const qs = (params: Record<string, string | number | undefined>) => {
   const p = Object.entries(params).filter(([, v]) => v !== undefined && v !== '')
   return p.length ? '?' + p.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&') : ''
@@ -112,6 +130,8 @@ export const api = {
 
   createBoard: (title?: string) => post<Created>('/boards', { title }),
   getBoard: (id: string) => get<Board>(`/boards/${id}`),
+  putDoc: (boardId: string, body: { baseVersion: number; baseText: string; text: string }) =>
+    put<DocResult>(`/boards/${boardId}/doc`, body),
   pin: (boardId: string, item: PinInput) => post<Created>(`/boards/${boardId}/pin`, item),
   link: (boardId: string, edge: LinkInput) => post<Created>(`/boards/${boardId}/edges`, edge),
   crossOut: (boardId: string, edgeId: string, crossedOut: boolean) =>

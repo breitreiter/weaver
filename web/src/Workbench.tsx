@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, type Facets, type SearchResult, type SearchParams, type Board as BoardData } from './api'
 import { Icon } from './Icon'
-import Board, { type Highlight } from './Board'
+import Document from './Document'
 import Evidence from './Evidence'
 import { RelationshipModal } from './RelationshipModal'
 
@@ -55,8 +55,6 @@ export default function Workbench() {
   const [f, setF] = useState<Record<string, string>>({})
   const [tz, setTz] = useState<Tz>('UTC')
   const [relOpen, setRelOpen] = useState(false)
-  // transient drawer→board hover-highlight — ephemeral UI state, not the URL/poll.
-  const [highlight, setHighlight] = useState<Highlight | null>(null)
   const [results, setResults] = useState<SearchResult[]>([])
   const [running, setRunning] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -84,8 +82,8 @@ export default function Workbench() {
       }
     }
   }, [boardId, setParams])
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- polls an external system; setState lands async after the fetch
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- polls an external system; setState lands async after the fetch
     reloadBoard()
     const t = setInterval(reloadBoard, BOARD_POLL_MS)
     return () => clearInterval(t)
@@ -116,7 +114,7 @@ export default function Workbench() {
   }
 
   // re-run when scope or a facet changes (free text runs on submit)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
   useEffect(() => { run() }, [scope, JSON.stringify(f)])
 
   async function ensureBoard(): Promise<string> {
@@ -295,18 +293,13 @@ export default function Workbench() {
       </div>
 
       <div className="board-pane">
-        {boardId
-          ? <Board board={board} focus={focus} highlight={highlight} onFocus={setFocus} />
-          : <div className="board-empty">
-              <div className="board-empty-title">the board</div>
-              <div>pinned findings hang here — the wall of red string.<br />pin something on the left to start one.</div>
-            </div>}
+        <Document board={board} boardId={boardId} ensureBoard={ensureBoard} onFocus={setFocus} />
       </div>
 
       <Evidence board={board} focus={focus} onFocus={setFocus} onExplore={exploreService}
         onDeleteEvidence={removeEvidence} onDeleteService={removeService}
         onDeleteEdge={removeEdge} onAddRelationship={() => setRelOpen(true)}
-        onHighlight={setHighlight} />
+        onHighlight={() => {}} />
 
       {relOpen && board && (
         <RelationshipModal members={board.nodes.map(n => n.serviceId)}
