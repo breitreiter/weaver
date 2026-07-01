@@ -203,6 +203,11 @@ right rail).
   is the intended replacement for the current click→focus gesture, which reads as
   fiddly (subtle feedback, no-op on same-ref re-click). The forage→write direction
   is already covered by the evidence rail's "cite @-ref" button.
+- **Surface the `@`-tag id on the evidence card (todo).** The typed `@`-id
+  (`@an:svc:metric`) is currently only reachable via the cite button, `@`-autocomplete,
+  or CLI `board show` — a human reading a card can't *see* the tag to type it by hand.
+  Show it on the card (a small mono handle, ideally click-to-copy) so `@`-tagging is
+  usable directly, not just through the button.
 - **Stability / heat overlay (promising — parked for post-core).** A _shared_
   "settled vs churning" signal, distinct from the per-human catch-up highlight.
   Maturity is **emergent from edit activity, not authorship** — a region cools as it
