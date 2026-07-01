@@ -3,7 +3,7 @@ import {
   EditorView, keymap, drawSelection, lineNumbers, ViewPlugin, Decoration, MatchDecorator,
   type DecorationSet, type ViewUpdate,
 } from '@codemirror/view'
-import { Annotation } from '@codemirror/state'
+import { Annotation, StateField, StateEffect } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -61,11 +61,66 @@ const theme = EditorView.theme({
   '.cm-completionDetail': { color: 'var(--text-dim)', fontStyle: 'normal', marginLeft: '8px', fontSize: '11px' },
 }, { dark: true })
 
-function replaceDoc(view: EditorView, text: string) {
+// --- change-highlight: mark what the AGENT changed since the human last caught up,
+// so new info / corrections are easy to locate. Recency, not permanent authorship:
+// a self-remapping decoration field (the human's own edits shift the marks and are
+// never marked themselves) that fades out a few seconds after the agent stops
+// writing. See co-edit-document.md.
+const UNSEEN_MS = 8000
+const addUnseen = StateEffect.define<{ from: number; to: number }[]>()
+const clearUnseen = StateEffect.define<null>()
+const unseenMark = Decoration.mark({ class: 'cm-unseen' })
+
+const unseenField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes)
+    for (const e of tr.effects) {
+      if (e.is(addUnseen)) {
+        const adds = e.value.filter(r => r.to > r.from).map(r => unseenMark.range(r.from, r.to))
+        if (adds.length) deco = deco.update({ add: adds, sort: true })
+      } else if (e.is(clearUnseen)) {
+        deco = Decoration.none
+      }
+    }
+    return deco
+  },
+  provide: f => EditorView.decorations.from(f),
+})
+
+// clear the marks a while after the agent's last edit (invisible by then — CSS has
+// faded them). Keyed per view so a burst of edits keeps resetting the timer.
+const unseenTimers = new Map<EditorView, number>()
+function scheduleUnseenClear(view: EditorView) {
+  clearTimeout(unseenTimers.get(view))
+  unseenTimers.set(view, window.setTimeout(() => {
+    view.dispatch({ effects: clearUnseen.of(null) })
+    unseenTimers.delete(view)
+  }, UNSEEN_MS))
+}
+
+// Apply an incoming (agent / merged) version as a MINIMAL edit — a common
+// prefix/suffix diff — so CM keeps the cursor and knows exactly what changed. When
+// `highlight`, the changed span is marked as the agent's unseen edit. Programmatic,
+// so it never re-triggers a save.
+function applyRemoteEdit(view: EditorView, newText: string, highlight: boolean) {
+  const old = view.state.doc.toString()
+  if (old === newText) return
+  let p = 0
+  const maxP = Math.min(old.length, newText.length)
+  while (p < maxP && old[p] === newText[p]) p++
+  let s = 0
+  const maxS = Math.min(old.length - p, newText.length - p)
+  while (s < maxS && old[old.length - 1 - s] === newText[newText.length - 1 - s]) s++
+  const from = p, to = old.length - s
+  const insert = newText.slice(p, newText.length - s)
+  const lit = highlight && insert.length > 0
   view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
+    changes: { from, to, insert },
     annotations: Programmatic.of(true),
+    effects: lit ? [addUnseen.of([{ from, to: from + insert.length }])] : [],
   })
+  if (lit) scheduleUnseenClear(view)
 }
 
 type SaveState = 'synced' | 'editing' | 'saving' | 'merging'
@@ -89,6 +144,9 @@ export default function Document({ board, boardId, ensureBoard, onFocus, onRegis
   const baseVerRef = useRef(0)
   const savingRef = useRef(false)
   const saveTimer = useRef<number | undefined>(undefined)
+  // false until the first real doc is loaded — so loading an EXISTING document
+  // doesn't light the whole thing up as "new"; only later agent edits highlight.
+  const loadedRef = useRef(false)
   const [saveState, setSaveState] = useState<SaveState>('synced')
 
   // keep refs fresh for the editor's long-lived callbacks (no deps → every render).
@@ -101,6 +159,7 @@ export default function Document({ board, boardId, ensureBoard, onFocus, onRegis
   useEffect(() => {
     baseTextRef.current = boardRef.current?.doc ?? ''
     baseVerRef.current = boardRef.current?.docVersion ?? 0
+    loadedRef.current = baseTextRef.current !== ''
 
     const scheduleSave = (delay = 700) => {
       clearTimeout(saveTimer.current)
@@ -130,7 +189,7 @@ export default function Document({ board, boardId, ensureBoard, onFocus, onRegis
           // server may have merged in remote edits; if the human hasn't typed since,
           // adopt the authoritative merged text.
           const now = view.state.doc.toString()
-          if (res.doc !== now && now === sent) replaceDoc(view, res.doc)
+          if (res.doc !== now && now === sent) applyRemoteEdit(view, res.doc, true)
           setSaveState('synced')
         }
       } catch {
@@ -189,6 +248,7 @@ export default function Document({ board, boardId, ensureBoard, onFocus, onRegis
         EditorView.lineWrapping,
         markdown(),
         syntaxHighlighting(mdHighlight),
+        unseenField,
         autocompletion({ override: [atSource] }),
         atPlugin,
         clickFocus,
@@ -212,6 +272,7 @@ export default function Document({ board, boardId, ensureBoard, onFocus, onRegis
 
     return () => {
       clearTimeout(saveTimer.current)
+      clearTimeout(unseenTimers.get(view)); unseenTimers.delete(view)
       onRegisterInsert?.(NOOP)
       view.destroy(); viewRef.current = null
     }
@@ -226,7 +287,8 @@ export default function Document({ board, boardId, ensureBoard, onFocus, onRegis
     if (!view || !board) return
     const cur = view.state.doc.toString()
     if (cur !== baseTextRef.current) return // dirty — don't clobber the human
-    if (board.doc !== cur) replaceDoc(view, board.doc)
+    if (board.doc !== cur) applyRemoteEdit(view, board.doc, loadedRef.current)
+    loadedRef.current = true
     baseTextRef.current = board.doc
     baseVerRef.current = board.docVersion
     setSaveState('synced')

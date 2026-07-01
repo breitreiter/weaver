@@ -22,6 +22,14 @@
   font-size: 11px; color: var(--text-dim); background: var(--panel-2); }
 .doc-status-saving, .doc-status-merging { color: var(--accent); }
 
+/* change-highlight — text the agent just wrote/corrected glows, then fades (recency,
+   not permanent authorship). Lets you locate the newest info; settles on its own. */
+@keyframes cm-unseen-fade {
+  from { background-color: color-mix(in srgb, #57b98a 45%, transparent); }
+  to   { background-color: transparent; }
+}
+.cm-unseen { border-radius: 2px; animation: cm-unseen-fade 8s ease-out forwards; }
+
 .search-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px;
   border-bottom: 1px solid var(--border); }
 .search-head .brand { font-weight: 600; color: var(--text-h); letter-spacing: .5px; }
