@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, type Facets, type SearchResult, type SearchParams, type Board as BoardData } from './api'
 import { Icon } from './Icon'
@@ -53,6 +53,11 @@ export default function Workbench() {
   const [q, setQ] = useState('')
   const [f, setF] = useState<Record<string, string>>({})
   const [tz, setTz] = useState<Tz>('UTC')
+  // imperative handle into the document editor — the evidence rail's "cite @-ref"
+  // buttons deposit a reference at the cursor through this. Document registers its
+  // insert fn once the editor exists.
+  const docInsert = useRef<((text: string) => void) | null>(null)
+  const registerInsert = useCallback((fn: (text: string) => void) => { docInsert.current = fn }, [])
   const [results, setResults] = useState<SearchResult[]>([])
   const [running, setRunning] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -275,11 +280,12 @@ export default function Workbench() {
       </div>
 
       <div className="board-pane">
-        <Document board={board} boardId={boardId} ensureBoard={ensureBoard} onFocus={setFocus} />
+        <Document board={board} boardId={boardId} ensureBoard={ensureBoard} onFocus={setFocus} onRegisterInsert={registerInsert} />
       </div>
 
       <Evidence board={board} focus={focus} onFocus={setFocus} onExplore={exploreService}
-        onDeleteEvidence={removeEvidence} onDeleteService={removeService} />
+        onDeleteEvidence={removeEvidence} onDeleteService={removeService}
+        onInsertRef={ref => docInsert.current?.('@' + ref + ' ')} />
     </div>
   )
 }

@@ -224,6 +224,14 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .ev-trash:hover { color: var(--up); background: var(--panel-2); }
 .ev-service-head .ev-trash { margin-left: auto; }
 
+/* cite affordance — deposit the @-reference into the document (accent on hover). */
+.ev-cite { display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  padding: 2px; border-radius: 4px; flex-shrink: 0; }
+.ev-cite:hover { color: var(--accent); background: var(--panel-2); }
+.ev-service-head .ev-cite { margin-left: auto; }
+.ev-item-actions { display: flex; gap: 2px; align-self: flex-start; flex-shrink: 0; }
+
 /* evidence card — 2px border in the kind colour, kind icon promoted to the lead.
    --k carries the kind colour to both the border and the icon from one source. */
 .ev-item { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px;

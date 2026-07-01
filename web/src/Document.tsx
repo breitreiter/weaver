@@ -28,6 +28,7 @@ import { api, type Board as BoardData } from './api'
 // marks a programmatic doc replacement so the change-listener doesn't treat it as a
 // human keystroke (which would re-trigger a save and loop).
 const Programmatic = Annotation.define<boolean>()
+const NOOP = () => {}
 
 const mdHighlight = HighlightStyle.define([
   { tag: tags.heading1, fontSize: '1.4em', fontWeight: '600', color: 'var(--text-h)' },
@@ -69,11 +70,14 @@ function replaceDoc(view: EditorView, text: string) {
 
 type SaveState = 'synced' | 'editing' | 'saving' | 'merging'
 
-export default function Document({ board, boardId, ensureBoard, onFocus }: {
+export default function Document({ board, boardId, ensureBoard, onFocus, onRegisterInsert }: {
   board: BoardData | null
   boardId: string | null
   ensureBoard: () => Promise<string>
   onFocus: (svc: string) => void
+  // register an "insert at cursor" fn once the editor exists — the evidence rail's
+  // "cite @-ref" buttons call it to drop a reference into the document at the cursor.
+  onRegisterInsert?: (insert: (text: string) => void) => void
 }) {
   const parentRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -199,8 +203,20 @@ export default function Document({ board, boardId, ensureBoard, onFocus }: {
       ],
     })
     viewRef.current = view
-    return () => { clearTimeout(saveTimer.current); view.destroy(); viewRef.current = null }
+
+    // register "insert at the cursor" so the evidence rail can deposit @-refs.
+    onRegisterInsert?.((text: string) => {
+      view.dispatch(view.state.replaceSelection(text))
+      view.focus()
+    })
+
+    return () => {
+      clearTimeout(saveTimer.current)
+      onRegisterInsert?.(NOOP)
+      view.destroy(); viewRef.current = null
+    }
     // mount once — a lazily-created board must NOT remount the editor (it'd lose text).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // adopt server text when the editor is in sync (not mid-edit) — this is how the

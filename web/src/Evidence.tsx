@@ -28,13 +28,16 @@ const EXPLORE: { scope: string; icon: string; label: string }[] = [
 
 type NodeGroup = { service: string; label?: string; evidence: EvidenceItem[] }
 
-export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService }: {
+export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvidence, onDeleteService, onInsertRef }: {
   board: BoardData | null
   focus: string | null
   onFocus: (svc: string) => void
   onExplore: (scope: string, service: string, facets?: Record<string, string>) => void
   onDeleteEvidence: (evidenceId: string) => void
   onDeleteService: (service: string) => void
+  // deposit an @-reference (a service id, or a finding's typed id) into the document
+  // at the cursor. The forage→write bridge: pin a fact, then cite it in the prose.
+  onInsertRef: (ref: string) => void
 }) {
   const groups = useMemo(() => board ? groupByService(board) : [], [board])
   const evidenceCount = useMemo(() => groups.reduce((n, g) => n + g.evidence.length, 0), [groups])
@@ -66,6 +69,12 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
               <Icon name="deployed_code" size={16} className="bnode-ico" />
               <span className="ev-service-title mono">{g.service}</span>
               {g.label && <span className="ev-service-label">{g.label}</span>}
+              {real && (
+                <button className="ev-cite" title={`cite @${g.service} in the document`}
+                  onClick={e => { e.stopPropagation(); onInsertRef(g.service) }}>
+                  <Icon name="alternate_email" size={15} />
+                </button>
+              )}
               {real && (
                 <button className="ev-trash" title={`remove ${g.service} and all its evidence`}
                   onClick={e => { e.stopPropagation(); onDeleteService(g.service) }}>
@@ -107,10 +116,16 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
                       </div>
                     )}
                   </div>
-                  <button className="ev-trash ev-item-trash" title="remove this evidence"
-                    onClick={e => { e.stopPropagation(); onDeleteEvidence(ev.id) }}>
-                    <Icon name="delete" size={14} />
-                  </button>
+                  <div className="ev-item-actions" onClick={e => e.stopPropagation()}>
+                    <button className="ev-cite" title={`cite @${ev.refId ?? ev.id} in the document`}
+                      onClick={() => onInsertRef(ev.refId ?? ev.id)}>
+                      <Icon name="alternate_email" size={14} />
+                    </button>
+                    <button className="ev-trash" title="remove this evidence"
+                      onClick={() => onDeleteEvidence(ev.id)}>
+                      <Icon name="delete" size={14} />
+                    </button>
+                  </div>
                 </div>
               )
             })}
