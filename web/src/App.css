@@ -230,7 +230,6 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
   background: none; border: none; color: var(--text-dim); cursor: pointer;
   padding: 2px; border-radius: 4px; flex-shrink: 0; }
 .ev-trash:hover { color: var(--up); background: var(--panel-2); }
-.ev-service-head .ev-trash { margin-left: auto; }
 
 /* cite affordance — deposit the @-reference into the document (accent on hover). */
 .ev-cite { display: inline-flex; align-items: center; justify-content: center;
