@@ -79,14 +79,13 @@ void Help()
           blast-radius <id>             who depends on a node (tests a guess)
           relationships <a> <b>         the facts between two services (ground a link)
 
-        build the wall (the board — co-built with the human)
+        write it up (the board — pins + the co-edited document)
           board new [title]             start a board; prints its id + URL
-          board show [id|url]           print the board (with edge + evidence ids)
-          board review [id|url]         list the facts under each red string
+          board show [id|url]           print the board (pinned services + evidence)
           pin <id|service>              pin a search result by its typed id, OR a
               [--as K --aspect A]         service + manual evidence (--note/--evidence/--at)
           unpin <evidence-id>           drop one finding
-          unpin <service> --all         remove a service, its evidence + its strings
+          unpin <service> --all         remove a service and its evidence
           doc show [id|url]             print the co-edited document (+ version)
           doc edit --find "x" --replace "y"  anchored find/replace — re-anchors on
                                           a concurrent edit, never blind offsets
@@ -345,7 +344,7 @@ void Facets()
     Hint("weaver search anomalies --subsystem <s>", "weaver search logs --grep \"<term>\" --level error");
 }
 
-// the observed facts between two services — what a red string can be grounded in.
+// the observed facts between two services — what a claim can be grounded in.
 // Enumerates (dependency / shared route / temporal precedence); never crowns a cause.
 void Relationships()
 {
@@ -419,7 +418,7 @@ string SearchQuery(string scope, int limit)
     return "?" + string.Join("&", p);
 }
 
-// --- the board (the agent co-builds the wall of red string) ---------------
+// --- the board (pins + the co-edited document) ----------------------------
 void Board()
 {
     var web = Environment.GetEnvironmentVariable("WEAVER_WEB") ?? "http://localhost:5173";
@@ -431,16 +430,15 @@ void Board()
         var c = api.Post<CreatedDto>("/api/boards", new { title = string.IsNullOrWhiteSpace(title) ? null : title });
         Console.WriteLine($"board {c.Id} created");
         Console.WriteLine($"open: {web}{c.Url}");
-        Console.WriteLine($"tip:  export WEAVER_BOARD={c.Id}   (so pin/link target it)");
+        Console.WriteLine($"tip:  export WEAVER_BOARD={c.Id}   (so pin/doc target it)");
         return;
     }
 
     var id = ResolveBoard(posIndex: 1);
     var b = api.Get<BoardDto>($"/api/boards/{id}");
-    if (sub == "review") { BoardReview(b); return; }
 
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
-    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Nodes.Count} service{(b.Nodes.Count == 1 ? "" : "s")}, {b.Edges.Count} edge{(b.Edges.Count == 1 ? "" : "s")})");
+    Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Nodes.Count} service{(b.Nodes.Count == 1 ? "" : "s")})");
     Console.WriteLine($"open: {web}/view?board={b.Id}");
     Console.WriteLine("services:");
     foreach (var n in b.Nodes)
@@ -453,34 +451,7 @@ void Board()
                 + (string.IsNullOrWhiteSpace(ev.Summary) ? (ev.Label is { } l ? "  " + l : "") : "  " + ev.Summary)
                 + (ev.RefId is { } rid ? $"   @{rid}" : ""));
     }
-    if (b.Edges.Count > 0)
-    {
-        Console.WriteLine("red string:");
-        foreach (var e in b.Edges)
-            // lead with the edge id — the handle `crossout` / edge-delete take.
-            Console.WriteLine($"  {e.Id}  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]"
-                + (e.CrossedOut ? "  (cut)" : ""));
-    }
     Hint("weaver pin <id|service>", "weaver doc show", "weaver doc edit --find \"…\" --replace \"…\"");
-}
-
-// "challenge my wall" — for each red string, list the facts beneath it; flag any
-// with no recorded relationship as asserted-not-grounded. Enumerates only.
-void BoardReview(BoardDto b)
-{
-    var strings = b.Edges.Where(e => e.Kind is not ("dependency" or "route")).ToList();
-    if (strings.Count == 0) { Console.WriteLine("no red string on the board yet — nothing to review."); Hint("weaver link <a> <b> --as \"explains\""); return; }
-    Console.WriteLine($"reviewing {strings.Count} red string(s) — the facts under each (enumerated, never a verdict):");
-    foreach (var e in strings)
-    {
-        var tag = e.CrossedOut ? "  (cut)" : "";
-        Console.WriteLine($"\n  {e.Id}  {e.From} -> {e.To}  ({e.Kind}{(e.Label is { } l ? ": " + l : "")}) [{e.DrawnBy}]{tag}");
-        var rels = api.Get<RelationshipsDto>($"/api/relationships?a={Uri.EscapeDataString(e.From)}&b={Uri.EscapeDataString(e.To)}").Relationships;
-        if (rels.Count == 0) { Console.WriteLine("      ⚠ no recorded relationship between these two — asserted, not grounded."); continue; }
-        foreach (var r in rels)
-            Console.WriteLine($"      · [{r.Group}] {r.From} -> {r.To}  {r.Title}");
-    }
-    Hint("weaver crossout <edge|a b>   (cut a string the facts don't support)");
 }
 
 // Pin a search result by its TYPED ID (an:/tr:/log:/me:/ce:/svc:) — resolves the

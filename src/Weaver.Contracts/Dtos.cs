@@ -84,10 +84,10 @@ public record AnomalyDto(
 // Earliest onset per subject — orders precedence, crowns nothing.
 public record TimelineEntryDto(string SubjectId, string SubjectKind, string Metric, string OnsetTs, double Z);
 
-// The observed relationships between two on-board nodes — facts the operator can
-// ground a red string in (direct dependency, shared route, temporal precedence).
-// Enumerates what the data holds; never ranks one as the cause. From/To carry the
-// relationship's real direction (may differ from the drag). See sensemaking-pivot.md.
+// The observed relationships between two services — facts the operator can ground a
+// claim in (direct dependency, shared route, temporal precedence). Enumerates what
+// the data holds; never ranks one as the cause. From/To carry the relationship's
+// real direction. See sensemaking-pivot.md.
 public record RelationshipDto(
     string Group,            // dependency | route | temporal
     string From,
@@ -111,10 +111,8 @@ public record RelationshipsDto(string A, string B, IReadOnlyList<RelationshipDto
 // the opaque storage handle (what `unpin`/delete take); RefId is the shared one.
 public record EvidenceItemDto(string Id, string Kind, string Aspect, string? At, JsonElement? Payload, string? Label, string Summary, string? RefId);
 public record BoardNodeDto(string ServiceId, string? Label, IReadOnlyList<EvidenceItemDto> Evidence);
-public record BoardEdgeDto(string Id, string From, string To, string Kind, string? Label, string DrawnBy, bool CrossedOut);
 public record BoardDto(string Id, string Title, string CreatedAt,
-    IReadOnlyList<BoardNodeDto> Nodes, IReadOnlyList<BoardEdgeDto> Edges,
-    string Doc, int DocVersion);
+    IReadOnlyList<BoardNodeDto> Nodes, string Doc, int DocVersion);
 
 // PUT the co-edited document. BaseVersion = the version the writer last saw;
 // BaseText = what it was editing from (the merge ancestor when the server has
@@ -127,8 +125,6 @@ public record CreateBoardReq(string? Title);
 // pin = ensure a node per service + (optionally) layer one piece of evidence onto
 // the first. ServiceIds carries multiple for a trace (its participant services).
 public record PinReq(IReadOnlyList<string> ServiceIds, EvidenceRefDto? Evidence, string? Label);
-public record LinkReq(string From, string To, string? Kind, string? Label, string? DrawnBy);
-public record CrossOutReq(bool CrossedOut);
 public record CreatedDto(string Id, string Url);
 
 // --- change events (deploys/config/flags — telemetry, per the dataset contract)

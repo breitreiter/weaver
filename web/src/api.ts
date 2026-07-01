@@ -42,9 +42,7 @@ export interface Relationships { a: string; b: string; relationships: Relationsh
 // the document. id is the opaque storage handle (delete/unpin). Same identity as the CLI.
 export interface EvidenceItem { id: string; kind: string; aspect: string; at?: string | null; payload?: unknown; label?: string; summary: string; refId?: string | null }
 export interface BoardNode { serviceId: string; label?: string; evidence: EvidenceItem[] }
-export interface BoardEdge { id: string; from: string; to: string; kind: string; label?: string; drawnBy: string; crossedOut: boolean }
-export interface LinkInput { from: string; to: string; kind?: string; label?: string; drawnBy?: string }
-export interface Board { id: string; title: string; createdAt: string; nodes: BoardNode[]; edges: BoardEdge[]; doc: string; docVersion: number }
+export interface Board { id: string; title: string; createdAt: string; nodes: BoardNode[]; doc: string; docVersion: number }
 // PUT /doc result: the authoritative text + version after an optimistic write.
 // conflict=true means the writer's edit touched lines a concurrent edit also
 // changed — it was NOT applied; the writer should re-base on `doc` and retry.
@@ -133,10 +131,6 @@ export const api = {
   putDoc: (boardId: string, body: { baseVersion: number; baseText: string; text: string }) =>
     put<DocResult>(`/boards/${boardId}/doc`, body),
   pin: (boardId: string, item: PinInput) => post<Created>(`/boards/${boardId}/pin`, item),
-  link: (boardId: string, edge: LinkInput) => post<Created>(`/boards/${boardId}/edges`, edge),
-  crossOut: (boardId: string, edgeId: string, crossedOut: boolean) =>
-    post<BoardEdge>(`/boards/${boardId}/edges/${edgeId}/crossout`, { crossedOut }),
-  deleteEdge: (boardId: string, edgeId: string) => del<{ ok: boolean }>(`/boards/${boardId}/edges/${edgeId}`),
   deleteEvidence: (boardId: string, evidenceId: string) => del<{ ok: boolean }>(`/boards/${boardId}/evidence/${evidenceId}`),
   deleteNode: (boardId: string, serviceId: string) => del<{ ok: boolean }>(`/boards/${boardId}/nodes/${encodeURIComponent(serviceId)}`),
 

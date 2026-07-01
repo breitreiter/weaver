@@ -64,10 +64,10 @@ app.MapGet("/api/services/{id}", (WeaverDbContext db, string id) =>
     return Results.Ok(new ServiceDetailDto(ToServiceDto(s), dependsOn, dependedOnBy));
 });
 
-// Real relationships between two on-board nodes — the observed facts the operator
-// can ground a red string in when they draw a line. Enumerates (direct dependency,
-// shared route, temporal precedence); never crowns one as the cause. Direction
-// comes from the data, not the drag.
+// Real relationships between two services — the observed facts the operator can
+// ground a claim in when they write it up. Enumerates (direct dependency, shared
+// route, temporal precedence); never crowns one as the cause. Direction comes from
+// the data.
 app.MapGet("/api/relationships", (WeaverDbContext db, string a, string b) =>
 {
     if (db.Services.FirstOrDefault(s => s.Id == a) is null) return Results.NotFound(new { error = $"unknown service '{a}'" });
@@ -178,8 +178,7 @@ app.MapGet("/api/boards/{id}", (BoardsDbContext db, string id) =>
         .ToLookup(e => e.ServiceId);
     var nodeDtos = nodes.Select(n => new BoardNodeDto(
         n.ServiceId, n.Label, evidence[n.ServiceId].Select(ToEvidenceDto).ToList())).ToList();
-    var edges = db.BoardEdges.AsNoTracking().Where(e => e.BoardId == id).OrderBy(e => e.CreatedAt).ToList().Select(ToBoardEdgeDto).ToList();
-    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, nodeDtos, edges, b.Doc, b.DocVersion));
+    return Results.Ok(new BoardDto(b.Id, b.Title, b.CreatedAt, nodeDtos, b.Doc, b.DocVersion));
 });
 
 // The co-edited document. Optimistic concurrency: if the writer's BaseVersion still
@@ -251,50 +250,8 @@ app.MapPost("/api/boards/{id}/pin", (BoardsDbContext db, string id, PinReq req) 
     return Results.Ok(new CreatedDto(services[0], $"/view?board={id}"));
 });
 
-app.MapPost("/api/boards/{id}/edges", (BoardsDbContext db, string id, LinkReq req) =>
-{
-    if (db.Boards.FirstOrDefault(x => x.Id == id) is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
-    // Drawing a string to a service puts it on the wall: ensure a bare node for
-    // each endpoint so the edge can't dangle. The UI only ever links two on-board
-    // nodes; this keeps a CLI `link` to an un-pinned service consistent with that
-    // (else the UI silently drops the edge as having an absent endpoint).
-    foreach (var svc in new[] { req.From, req.To })
-        if (!string.IsNullOrWhiteSpace(svc) && !db.BoardNodes.Any(n => n.BoardId == id && n.ServiceId == svc))
-            db.BoardNodes.Add(new BoardNodeEntity { Id = NewId(), BoardId = id, ServiceId = svc, Label = null, CreatedAt = NowIso() });
-    var edge = new BoardEdgeEntity
-    {
-        Id = NewId(), BoardId = id, FromService = req.From, ToService = req.To,
-        Kind = req.Kind ?? "causal", Label = req.Label, DrawnBy = req.DrawnBy ?? "agent", CreatedAt = NowIso(),
-    };
-    db.BoardEdges.Add(edge);
-    db.SaveChanges();
-    return Results.Ok(new CreatedDto(edge.Id, $"/view?board={id}"));
-});
-
-// Cross out (or restore) the red string — the demo's payoff: the operator cuts a
-// thread after an out-of-band exoneration. The edge is kept (struck through), not
-// deleted, so the reasoning trail stays reviewable.
-app.MapPost("/api/boards/{id}/edges/{edgeId}/crossout", (BoardsDbContext db, string id, string edgeId, CrossOutReq req) =>
-{
-    var edge = db.BoardEdges.FirstOrDefault(e => e.BoardId == id && e.Id == edgeId);
-    if (edge is null) return Results.NotFound(new { error = $"unknown edge '{edgeId}'" });
-    edge.CrossedOut = req.CrossedOut;
-    db.SaveChanges();
-    return Results.Ok(ToBoardEdgeDto(edge));
-});
-
-app.MapDelete("/api/boards/{id}/edges/{edgeId}", (BoardsDbContext db, string id, string edgeId) =>
-{
-    var edge = db.BoardEdges.FirstOrDefault(e => e.BoardId == id && e.Id == edgeId);
-    if (edge is null) return Results.NotFound(new { error = $"unknown edge '{edgeId}'" });
-    db.BoardEdges.Remove(edge);
-    db.SaveChanges();
-    return Results.Ok(new { ok = true });
-});
-
-// Take a single finding off the wall. Unlike the edge crossout (which is kept,
-// struck through), a mis-pinned piece of evidence is just removed — it never
-// carried reasoning, only an observation.
+// Take a single finding off the board — a mis-pinned piece of evidence is just
+// removed; it never carried reasoning, only an observation.
 app.MapDelete("/api/boards/{id}/evidence/{evidenceId}", (BoardsDbContext db, string id, string evidenceId) =>
 {
     var ev = db.Evidence.FirstOrDefault(e => e.BoardId == id && e.Id == evidenceId);
@@ -304,16 +261,14 @@ app.MapDelete("/api/boards/{id}/evidence/{evidenceId}", (BoardsDbContext db, str
     return Results.Ok(new { ok = true });
 });
 
-// Remove a whole service from the board: its node, every piece of evidence layered
-// on it, and any red string touching it. No FK cascade is configured, so each
-// table is cleared explicitly.
+// Remove a whole service from the board: its node and every piece of evidence
+// layered on it. No FK cascade is configured, so each table is cleared explicitly.
 app.MapDelete("/api/boards/{id}/nodes/{serviceId}", (BoardsDbContext db, string id, string serviceId) =>
 {
     var node = db.BoardNodes.FirstOrDefault(n => n.BoardId == id && n.ServiceId == serviceId);
     if (node is null) return Results.NotFound(new { error = $"unknown node '{serviceId}'" });
     db.BoardNodes.Remove(node);
     db.Evidence.RemoveRange(db.Evidence.Where(e => e.BoardId == id && e.ServiceId == serviceId));
-    db.BoardEdges.RemoveRange(db.BoardEdges.Where(e => e.BoardId == id && (e.FromService == serviceId || e.ToService == serviceId)));
     db.SaveChanges();
     return Results.Ok(new { ok = true });
 });
@@ -702,8 +657,6 @@ static EvidenceItemDto ToEvidenceDto(EvidenceEntity e)
     var payload = ParseJson(e.Payload);
     return new(e.Id, e.Kind, e.Aspect, e.At, payload, e.Label, EvidenceSummary(e.Kind, payload), e.RefId);
 }
-static BoardEdgeDto ToBoardEdgeDto(BoardEdgeEntity e) =>
-    new(e.Id, e.FromService, e.ToService, e.Kind, e.Label, e.DrawnBy, e.CrossedOut);
 
 // The one-line, kind-aware summary of a pinned payload — the SINGLE source of the
 // words both `board show` (CLI) and the evidence card (UI) print. Payloads vary
@@ -775,9 +728,8 @@ static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
     var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
     var hot = spans.FirstOrDefault();
     // distinct services the trace crossed — lean metadata stored on the pin. The
-    // count drives the drawer's "services in this trace" button; the ids let the
-    // board's hover path-lens light every on-board participant + the edges among
-    // them (graph-redesign.md step 3) without re-fetching the span list.
+    // count drives the drawer's "services in this trace" button without re-fetching
+    // the span list.
     var serviceIds = spans.Select(s => s.ServiceId).Distinct().ToList();
     var serviceCount = serviceIds.Count;
     // pin lands ONE node — the hot hop. Other participants aren't dragged in (that
@@ -871,7 +823,7 @@ static List<RelationshipDto> RelationshipsBetween(WeaverDbContext db, string a, 
     }
 
     // 3. temporal precedence — both moved; order by anomaly onset. Reading
-    // precedence as causation stays the operator's call, so this draws a red string.
+    // precedence as causation stays the operator's call, written in the document.
     var (series, at) = LoadSeries(db, null);
     var onsets = Analysis.Anomalies(series.Where(s => s.Kind == "service" && (s.Id == a || s.Id == b)), at, 3.0, 15.0)
         .Where(x => x.OnsetTs is not null)

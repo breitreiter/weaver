@@ -1,13 +1,14 @@
 namespace Weaver.Core;
 
-// The board ("wall of red string") — writable user content, so it lives in its
-// own store, NOT the read-only telemetry DB. EF owns this schema (EnsureCreated).
+// The board — writable user content, so it lives in its own store, NOT the
+// read-only telemetry DB. EF owns this schema (EnsureCreated).
 //
-// The board has ONE primitive: a node, which is a service placed on the wall.
-// Everything heterogeneous (anomalies, logs, traces, metrics, changes) is
-// EVIDENCE layered onto a node — never a wall object in its own right. A node is
-// identified within its board by its serviceId (node ↔ service is 1:1), so edges
-// and evidence reference a service directly.
+// A board carries pinned nodes + their evidence (the shoebox) and a co-edited
+// markdown document (the synthesis surface — RCA / PIR / plan). A node is a service
+// placed on the board; everything heterogeneous (anomalies, logs, traces, metrics,
+// changes) is EVIDENCE layered onto a node. A node is identified within its board by
+// its serviceId (node ↔ service is 1:1), so evidence references a service directly;
+// relationships between findings live in the document's prose, not as graph edges.
 
 public class BoardEntity
 {
@@ -48,18 +49,5 @@ public class EvidenceEntity
     public string Payload { get; set; } = "{}";    // json snapshot that justified the pin
     public string? Label { get; set; }
     public string? RefId { get; set; }             // canonical typed id (an:svc:metric, tr:…) — the @-reference handle
-    public string CreatedAt { get; set; } = "";
-}
-
-public class BoardEdgeEntity
-{
-    public string Id { get; set; } = "";
-    public string BoardId { get; set; } = "";
-    public string FromService { get; set; } = "";
-    public string ToService { get; set; } = "";
-    public string Kind { get; set; } = "causal";  // dependency (tool fact) | causal | temporal | custom (the red string)
-    public string? Label { get; set; }
-    public string DrawnBy { get; set; } = "agent"; // human | agent
-    public bool CrossedOut { get; set; }           // the operator cut this thread (kept, struck through)
     public string CreatedAt { get; set; } = "";
 }
