@@ -197,6 +197,12 @@ right rail).
 
 ## Open / deferred
 
+- **`@`-ref hover cross-reference (deferred).** Hovering an `@`-ref in the document
+  should highlight the matching finding in the evidence rail (and likely the
+  reverse) — a cheap, legible way to cross-reference prose against the shoebox. This
+  is the intended replacement for the current click→focus gesture, which reads as
+  fiddly (subtle feedback, no-op on same-ref re-click). The forage→write direction
+  is already covered by the evidence rail's "cite @-ref" button.
 - **Stability / heat overlay (promising — parked for post-core).** A _shared_
   "settled vs churning" signal, distinct from the per-human catch-up highlight.
   Maturity is **emergent from edit activity, not authorship** — a region cools as it
