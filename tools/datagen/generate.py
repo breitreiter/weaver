@@ -85,6 +85,22 @@ BASE_ERROR_TEMPLATES = {
 # Reserved for the incident only — must never appear in the baseline.
 INC_TEMPLATES = {"db.pool.exhausted", "upstream.timeout", "http.503", "deploy.start"}
 
+PATHS = ["/", "/products", "/cart", "/checkout", "/search", "/orders", "/login"]
+FIELDS_REASONS = ["transient", "timeout", "io error"]
+
+
+def _base_error_line(rng, kind):
+    """One baseline error log line for a service kind, as (template_id, message,
+    fields_json). Shared by ambient log gen and the correlated-log pivot so the
+    two are drawn from the same vocabulary."""
+    tmpl, tmsg, tf = rng.choice(BASE_ERROR_TEMPLATES[kind])
+    f = dict(tf); f.update(reason=rng.choice(FIELDS_REASONS), path=rng.choice(PATHS),
+                           field=rng.choice(["email", "qty", "token"]),
+                           ms=rng.randint(50, 900), rows=rng.randint(1, 9000),
+                           key=f"k:{rng.randint(1,999)}", job=f"job-{rng.randint(1000,9999)}")
+    msg = tmsg.format(**{k: f.get(k, "") for k in ("path", "field", "ms", "key", "job", "reason", "status")})
+    return tmpl, msg, json.dumps(tf)
+
 
 # ---------------------------------------------------------------------------
 def iso(ts: datetime) -> str:
@@ -132,7 +148,8 @@ def build_schema(con: sqlite3.Connection) -> None:
         CREATE TABLE log_events (
             id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id),
             ts TEXT NOT NULL, level TEXT NOT NULL, template_id TEXT NOT NULL,
-            message TEXT NOT NULL, fields TEXT NOT NULL );
+            message TEXT NOT NULL, fields TEXT NOT NULL,
+            trace_id TEXT, span_id TEXT );          -- correlation pivot (nullable)
 
         CREATE TABLE change_events (
             id TEXT PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL,
@@ -374,15 +391,17 @@ def generate(topology: dict, seed: int, out_path: Path, traces_per_min: int) -> 
                 edge_rows.append(("edge", d["id"], iso(ts), metric, val))
     con.executemany("INSERT INTO metric_samples VALUES (?,?,?,?,?)", edge_rows)
 
-    # --- logs --------------------------------------------------------------
+    # --- logs (ambient) ----------------------------------------------------
+    # Trace emission appends correlated log rows into this same list, so hold
+    # the INSERT until after the trace loop below.
     log_rows = _gen_logs(rng, services, profiles, start, minutes, inc)
-    con.executemany("INSERT INTO log_events VALUES (?,?,?,?,?,?,?)", log_rows)
+    kind_by_sid = {s["id"]: s["kind"] for s in services}
 
     # --- change events -----------------------------------------------------
     change_rows = _gen_changes(start, inc)
     con.executemany("INSERT INTO change_events VALUES (?,?,?,?,?,?)", change_rows)
 
-    # --- traces + spans ----------------------------------------------------
+    # --- traces + spans (+ correlated logs) --------------------------------
     trace_rows, span_rows = [], []
     weights = [float(r["weight"]) for r in routes]
     for minute in range(minutes):
@@ -390,7 +409,9 @@ def generate(topology: dict, seed: int, out_path: Path, traces_per_min: int) -> 
             route = rng.choices(routes, weights=weights, k=1)[0]
             started = start + timedelta(minutes=minute, seconds=rng.uniform(0, 60))
             mf = (started - start).total_seconds() / 60.0
-            _emit_trace(rng, route, started, mf, minutes, profiles, dep_by_pair, inc, trace_rows, span_rows)
+            _emit_trace(rng, route, started, mf, minutes, profiles, dep_by_pair, inc,
+                        trace_rows, span_rows, log_rows, kind_by_sid)
+    con.executemany("INSERT INTO log_events VALUES (?,?,?,?,?,?,?,?,?)", log_rows)
     con.executemany("INSERT INTO traces VALUES (?,?,?,?,?,?)", trace_rows)
     con.executemany("INSERT INTO spans VALUES (?,?,?,?,?,?,?,?,?,?,?)", span_rows)
 
@@ -410,8 +431,6 @@ def generate(topology: dict, seed: int, out_path: Path, traces_per_min: int) -> 
 
 def _gen_logs(rng, services, profiles, start, minutes, inc: Incident):
     rows = []
-    paths = ["/", "/products", "/cart", "/checkout", "/search", "/orders", "/login"]
-    fields_reasons = ["transient", "timeout", "io error"]
 
     def uid():
         return str(uuid.UUID(int=rng.getrandbits(128)))
@@ -421,7 +440,6 @@ def _gen_logs(rng, services, profiles, start, minutes, inc: Incident):
         prof = profiles[sid]
         info_id, info_t = INFO_TEMPLATES[kind]
         warn_id, warn_t = WARN_TEMPLATES[kind]
-        base_errs = BASE_ERROR_TEMPLATES[kind]
         err_rate = prof.get("error_rate", 0.003)
         eff = inc.effects.get(sid) if inc.on else None
         for minute in range(minutes):
@@ -430,7 +448,7 @@ def _gen_logs(rng, services, profiles, start, minutes, inc: Incident):
                 return iso(ts0 + timedelta(seconds=rng.uniform(0, 60)))
             for _ in range(rng.randint(2, 4)):                      # info lines
                 ms = max(1, int(prof.get("latency_p50", 10) * rng.uniform(0.5, 2.5)))
-                msg = info_t.format(method=rng.choice(["GET", "POST"]), path=rng.choice(paths),
+                msg = info_t.format(method=rng.choice(["GET", "POST"]), path=rng.choice(PATHS),
                                     status=200, ms=ms, job=f"job-{rng.randint(1000,9999)}",
                                     key=f"k:{rng.randint(1,999)}", consumer="worker")
                 rows.append((uid(), sid, at(), "info", info_id, msg, json.dumps({"ms": ms})))
@@ -441,14 +459,9 @@ def _gen_logs(rng, services, profiles, start, minutes, inc: Incident):
                 rows.append((uid(), sid, at(), "warn", warn_id, msg, json.dumps({"ms": ms})))
             # baseline errors: bursty (clustered in a minute), varied templates
             if rng.random() < min(0.9, err_rate * 60):
-                tmpl, tmsg, tf = rng.choice(base_errs)
                 for _ in range(rng.randint(1, 3)):                  # a little cluster
-                    f = dict(tf); f.update(reason=rng.choice(fields_reasons), path=rng.choice(paths),
-                                           field=rng.choice(["email", "qty", "token"]),
-                                           ms=rng.randint(50, 900), rows=rng.randint(1, 9000),
-                                           key=f"k:{rng.randint(1,999)}", job=f"job-{rng.randint(1000,9999)}")
-                    msg = tmsg.format(**{k: f.get(k, "") for k in ("path", "field", "ms", "key", "job", "reason", "status")})
-                    rows.append((uid(), sid, at(), "error", tmpl, msg, json.dumps(tf)))
+                    tmpl, msg, fj = _base_error_line(rng, kind)
+                    rows.append((uid(), sid, at(), "error", tmpl, msg, fj))
 
             # --- incident logs: novel templates, only after this svc's onset
             if eff and minute >= eff["start"]:
@@ -479,7 +492,8 @@ def _gen_logs(rng, services, profiles, start, minutes, inc: Incident):
                          "info", "deploy.start",
                          f"starting {d['target']} {ver} (instance {k+1})",
                          json.dumps(d.get("fields", {}))))
-    return rows
+    # ambient logs carry no trace/span id; pad to the correlated 9-tuple shape.
+    return [r + (None, None) for r in rows]
 
 
 def _gen_changes(start, inc: Incident):
@@ -512,9 +526,10 @@ def _draw_self_ms(rng, prof, minute, total, sid, inc: Incident) -> int:
     return max(0, int(p99 * rng.uniform(0.7, 1.3)))
 
 
-def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Incident, trace_rows, span_rows):
+def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Incident,
+                trace_rows, span_rows, log_rows, kind_by_sid):
     path = route["path"]
-    trace_id = str(uuid.UUID(int=rng.getrandbits(128)))
+    trace_id = f"{rng.getrandbits(128):032x}"          # OTel: 32 lowercase hex
     spans = []
     parent_id = None
     for depth, sid in enumerate(path):
@@ -540,7 +555,7 @@ def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Inci
             status = "error"
         else:
             status = "ok"
-        spans.append({"id": str(uuid.UUID(int=rng.getrandbits(128))), "parent": parent_id,
+        spans.append({"id": f"{rng.getrandbits(64):016x}", "parent": parent_id,  # OTel: 16 hex
                       "service": sid, "edge": edge_id, "kind": "server",
                       "self_ms": self_ms, "status": status, "attrs": attrs})
         parent_id = spans[-1]["id"]
@@ -563,6 +578,37 @@ def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Inci
         span_rows.append((sp["id"], trace_id, sp["parent"], sp["service"], sp["edge"], sp["kind"],
                           int(sp["start_offset_ms"]), int(sp["duration_ms"]), int(sp["self_ms"]),
                           sp["status"], json.dumps(sp["attrs"])))
+
+    # --- correlated logs: the pivot. A sampled subset of failed spans emit the
+    # log that happened *under* them, carrying this span's trace_id + span_id.
+    # Healthy DBs get it too (baseline failures correlate), but every failed
+    # payments-db span is force-correlated so the demo pivot never lands dry.
+    for sp in spans:
+        if sp["status"] not in ("error", "timeout"):
+            continue
+        sid = sp["service"]
+        force = inc.on and sid == "payments-db"
+        if not force and rng.random() > 0.4:               # ~40% sampled otherwise
+            continue
+        ts = iso(started + timedelta(milliseconds=sp["start_offset_ms"]))
+        eff = inc.effects.get(sid) if inc.on else None
+        if eff and eff["role"] == "culprit":
+            w = sp["attrs"].get("db.pool_wait_ms", 0)
+            tmpl, msg, fj = ("db.pool.exhausted",
+                f"connection pool exhausted: waited {max(0, w)}ms for a free connection (pool_max=40)",
+                json.dumps({"pool_max": 40, "wait_ms": max(0, w), "pool_used": 40}))
+        elif eff and sid == "payments-api":
+            tmpl, msg, fj = ("upstream.timeout",
+                f"timeout waiting for payments-db connection after {2000 + rng.randint(0, 800)}ms",
+                json.dumps({"upstream": "payments-db", "timeout_ms": 2000}))
+        elif eff and eff["role"] == "cascade":
+            tmpl, msg, fj = ("http.503",
+                "503 Service Unavailable: upstream payments path unavailable",
+                json.dumps({"status": 503, "route": "checkout"}))
+        else:
+            tmpl, msg, fj = _base_error_line(rng, kind_by_sid[sid])
+        log_rows.append((str(uuid.UUID(int=rng.getrandbits(128))), sid, ts, "error", tmpl, msg, fj,
+                         trace_id, sp["id"]))
 
 
 def main() -> None:

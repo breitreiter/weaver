@@ -72,6 +72,8 @@ public sealed class WeaverDbContext : DbContext
             e.Property(x => x.TemplateId).HasColumnName("template_id");
             e.Property(x => x.Message).HasColumnName("message");
             e.Property(x => x.Fields).HasColumnName("fields");
+            e.Property(x => x.TraceId).HasColumnName("trace_id");
+            e.Property(x => x.SpanId).HasColumnName("span_id");
         });
 
         b.Entity<TraceEntity>(e =>

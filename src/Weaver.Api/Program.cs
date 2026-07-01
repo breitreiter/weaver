@@ -593,7 +593,7 @@ static DependencyDto ToDepDto(DependencyEntity d) => new(d.Id, d.FromService, d.
 static RequestTypeDto ToRouteDto(RequestTypeEntity r) =>
     new(r.Id, r.Name, r.Weight, JsonSerializer.Deserialize<string[]>(r.Path) ?? []);
 static LogEventDto ToLogDto(LogEventEntity l) =>
-    new(l.Id, l.ServiceId, l.Ts, l.Level, l.TemplateId, l.Message, ParseJson(l.Fields));
+    new(l.Id, l.ServiceId, l.Ts, l.Level, l.TemplateId, l.Message, ParseJson(l.Fields), l.TraceId, l.SpanId);
 static TraceDto ToTraceDto(TraceEntity t) =>
     new(t.Id, t.RequestTypeId, t.RootServiceId, t.StartedAt, t.DurationMs, t.Status);
 static SpanDto ToSpanDto(SpanEntity s) =>

@@ -38,7 +38,9 @@ public record LogEventDto(
     string Level,
     string TemplateId,
     string Message,
-    JsonElement Fields);
+    JsonElement Fields,
+    string? TraceId = null,
+    string? SpanId = null);
 
 public record SpanDto(
     string Id,

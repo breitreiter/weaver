@@ -48,6 +48,8 @@ public class LogEventEntity
     public string TemplateId { get; set; } = "";
     public string Message { get; set; } = "";
     public string Fields { get; set; } = "{}"; // json
+    public string? TraceId { get; set; }       // set when the log was emitted under a trace
+    public string? SpanId { get; set; }
 }
 
 public class TraceEntity
