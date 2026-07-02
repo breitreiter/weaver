@@ -366,6 +366,7 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
             var tq = db.Traces.AsQueryable();
             if (route is not null) tq = tq.Where(t => t.RequestTypeId == route);
             if (status is not null) tq = tq.Where(t => t.Status == status);
+            if (trace is not null) tq = tq.Where(t => t.Id == trace);   // pivot: one trace by id (e.g. from a correlated log)
             if (minMs is not null) tq = tq.Where(t => t.DurationMs >= minMs);
             if (from is not null) tq = tq.Where(t => string.Compare(t.StartedAt, from) >= 0);
             if (to is not null) tq = tq.Where(t => string.Compare(t.StartedAt, to) <= 0);

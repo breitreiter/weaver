@@ -183,8 +183,13 @@ void Logs()
         Console.WriteLine($"  {grp.Count(),4}  {grp.Key.Level,-5} {grp.Key.TemplateId}");
     Console.WriteLine("recent:");
     foreach (var e in logs.OrderByDescending(x => x.Ts).Take(5))
-        Console.WriteLine($"  {Clock(e.Ts)} {e.Level,-5} {e.ServiceId,-16} {e.Message}");
-    Hint("weaver logs <id> --level error", "weaver logs --grep \"<term>\"   (full-text)");
+    {
+        // correlated logs carry the trace they fired under — surface it so the
+        // pivot (weaver trace <id>) is one glance away.
+        var pivot = e.TraceId is { Length: >= 8 } tid ? $"  → tr:{tid[..8]}" : "";
+        Console.WriteLine($"  {Clock(e.Ts)} {e.Level,-5} {e.ServiceId,-16} {e.Message}{pivot}");
+    }
+    Hint("weaver logs <id> --level error", "weaver trace <id>   (follow a correlated log to its trace)");
 }
 
 void Traces()

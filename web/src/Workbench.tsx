@@ -340,7 +340,7 @@ function emptyMessage(scope: string, q: string, f: Record<string, string>): stri
   return `No ${scope}${where}. Loosen a facet or widen the window.`
 }
 
-function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: Tz; pinned: boolean; onPin: () => void; onExplore: (scope: string, svc: string) => void }) {
+function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: Tz; pinned: boolean; onPin: () => void; onExplore: (scope: string, svc: string, extra?: Record<string, string>) => void }) {
   const dir = r.type === 'anomaly' ? r.payload?.direction : undefined
   const startedAt = r.type === 'trace' ? fmtTime(r.payload?.trace?.startedAt, tz) : ''
   return (
@@ -362,6 +362,15 @@ function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: 
         {r.subtitle}
       </div>
       {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} onExplore={onExplore} />}
+      {r.type === 'log' && r.payload?.traceId && (
+        // the correlation pivot: this log fired under a sampled trace — jump to it.
+        <div className="log-trace">
+          <button className="hop-svc mono" title={`open the trace this log fired under (${r.payload.traceId})`}
+            onClick={() => onExplore('traces', '', { trace: r.payload.traceId })}>
+            <Icon name="account_tree" size={13} /> trace {r.payload.traceId.slice(0, 8)}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

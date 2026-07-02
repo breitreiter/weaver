@@ -19,6 +19,10 @@ Items ③–⑥ remain on record as a later "v2 dataset" milestone.
    no log.
 4. **UI link is a fast-follow**, not part of this cut. Land the data + verify the
    pivot via CLI/DTO first; the web affordance is its own small change.
+   **Landed:** `traces` search scope now filters by trace id; the web log card
+   shows a "trace" pivot button (→ `search traces --trace <id>`), and `weaver
+   logs` prints a `→ tr:<id8>` marker on correlated lines (follow with `weaver
+   trace <id>`). Still pending the canonical regen + API restart to test live.
 
 ## Why this exists
 

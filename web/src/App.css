@@ -112,6 +112,8 @@
 .pin.done { color: #0c1018; background: var(--accent); border-color: var(--accent); cursor: default; }
 
 /* trace mini span breakdown */
+.log-trace { margin-top: 6px; font-size: 11px; }
+.log-trace .hop-svc { width: auto; display: inline-flex; align-items: center; gap: 4px; }
 .trace-mini { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .hop { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .hop-svc { color: var(--text); width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

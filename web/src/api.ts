@@ -20,7 +20,7 @@ export interface Anomaly {
 export interface BlastNode { serviceId: string; hops: number }
 export interface BlastRadius { node: string; count: number; dependents: BlastNode[] }
 
-export interface LogEvent { id: string; serviceId: string; ts: string; level: string; templateId: string; message: string; fields: unknown }
+export interface LogEvent { id: string; serviceId: string; ts: string; level: string; templateId: string; message: string; fields: unknown; traceId?: string; spanId?: string }
 export interface Trace { id: string; requestTypeId: string; rootServiceId: string; startedAt: string; durationMs: number; status: string }
 export interface TimelineEntry { subjectId: string; subjectKind: string; metric: string; onsetTs: string; z: number }
 
