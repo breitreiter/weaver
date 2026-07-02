@@ -530,12 +530,22 @@ def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Inci
                 trace_rows, span_rows, log_rows, kind_by_sid):
     path = route["path"]
     trace_id = f"{rng.getrandbits(128):032x}"          # OTel: 32 lowercase hex
-    spans = []
-    parent_id = None
+    # One SERVER span per service on the path, plus one CLIENT span per hop, on the
+    # caller, carrying the edge. The client→server service pairing makes the topology
+    # derivable from traces alone (Tempo's service-graph model) instead of only from
+    # the authored dependencies table. ~2N-1 spans per trace for an N-service path.
+    n = len(path)
+    srv, clients = [None] * n, [None] * n   # clients[i] = the call path[i-1] -> path[i]
+
+    def new_span(service, kind, edge):
+        return {"id": f"{rng.getrandbits(64):016x}", "parent": None, "service": service,  # OTel: 16 hex
+                "edge": edge, "kind": kind, "attrs": {}}
+
+    # own work + own status per service (the leaf-level signal — unchanged from before)
+    own_ms, own_status = [0] * n, ["ok"] * n
     for depth, sid in enumerate(path):
         prof = profiles[sid]
-        edge_id = None if depth == 0 else dep_by_pair[(path[depth - 1], sid)]["id"]
-        attrs = {}
+        s = new_span(sid, "server", None)
         # The discriminator: at the culprit DB during the incident, self-time is
         # spent WAITING for a pool connection (queueing), not executing — exec is
         # flat, the wait inflates. Capacity, not a per-request code regression.
@@ -543,36 +553,48 @@ def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Inci
         if wait > 0:
             exec_ms = max(1, int(mean_value(prof, "latency_p50", mf, total, sid, Incident(None)) * rng.uniform(0.6, 1.4)))
             jittered_wait = max(0, int(wait * rng.uniform(0.5, 1.3)))
-            self_ms = exec_ms + jittered_wait
-            attrs = {"db.pool_wait_ms": jittered_wait, "db.exec_ms": exec_ms, "db.pool_max": 40}
+            own_ms[depth] = exec_ms + jittered_wait
+            s["attrs"] = {"db.pool_wait_ms": jittered_wait, "db.exec_ms": exec_ms, "db.pool_max": 40}
         else:
-            self_ms = _draw_self_ms(rng, prof, mf, total, sid, inc)
-
+            own_ms[depth] = _draw_self_ms(rng, prof, mf, total, sid, inc)
         err = mean_value(prof, "error_rate", mf, total, sid, inc)
         if wait > 1800 and rng.random() < 0.5:
-            status = "timeout"
+            own_status[depth] = "timeout"
         elif rng.random() < err:
-            status = "error"
-        else:
-            status = "ok"
-        spans.append({"id": f"{rng.getrandbits(64):016x}", "parent": parent_id,  # OTel: 16 hex
-                      "service": sid, "edge": edge_id, "kind": "server",
-                      "self_ms": self_ms, "status": status, "attrs": attrs})
-        parent_id = spans[-1]["id"]
+            own_status[depth] = "error"
+        srv[depth] = s
 
-    child_dur = 0
-    for depth in range(len(spans) - 1, -1, -1):
-        spans[depth]["duration_ms"] = spans[depth]["self_ms"] + child_dur
-        child_dur = spans[depth]["duration_ms"]
-    offset = 0
-    for sp in spans:
-        sp["start_offset_ms"] = offset
-        offset += sp["self_ms"]
+    net = [0] * n
+    for i in range(1, n):
+        net[i] = rng.randint(1, 5)          # one-way network overhead (ms) — kept small
+        clients[i] = new_span(path[i - 1], "client", dep_by_pair[(path[i - 1], path[i])]["id"])
+        clients[i]["parent"] = srv[i - 1]["id"]
+        srv[i]["parent"] = clients[i]["id"]
 
-    # end-user outcome propagates up: worst of any hop
-    statuses = {s["status"] for s in spans}
-    trace_status = "timeout" if "timeout" in statuses else ("error" if "error" in statuses else "ok")
-    root = spans[0]
+    # durations + status propagate bottom-up: a call's outcome is its callee's, and a
+    # server is as bad as its own work OR the downstream call it made (the cascade).
+    rank = {"ok": 0, "error": 1, "timeout": 2}
+    srv[n - 1].update(duration_ms=own_ms[n - 1], self_ms=own_ms[n - 1], status=own_status[n - 1])
+    for i in range(n - 1, 0, -1):
+        clients[i].update(duration_ms=srv[i]["duration_ms"] + 2 * net[i], self_ms=2 * net[i],
+                          status=srv[i]["status"])   # client self-time is network only — never outranks a hot server hop
+        worse = own_status[i - 1] if rank[own_status[i - 1]] >= rank[clients[i]["status"]] else clients[i]["status"]
+        srv[i - 1].update(duration_ms=own_ms[i - 1] + clients[i]["duration_ms"], self_ms=own_ms[i - 1], status=worse)
+
+    # offsets top-down: a server does its own work, then calls; the callee starts once
+    # the request has crossed the network. Linear chain → strictly increasing offsets.
+    srv[0]["start_offset_ms"] = 0
+    for i in range(1, n):
+        clients[i]["start_offset_ms"] = srv[i - 1]["start_offset_ms"] + own_ms[i - 1]
+        srv[i]["start_offset_ms"] = clients[i]["start_offset_ms"] + net[i]
+
+    # flatten in start order: srv0, client1, srv1, client2, srv2, … (client before its server)
+    spans = [srv[0]]
+    for i in range(1, n):
+        spans += [clients[i], srv[i]]
+
+    root = srv[0]
+    trace_status = root["status"]
     trace_rows.append((trace_id, route["id"], path[0], iso(started), int(root["duration_ms"]), trace_status))
     for sp in spans:
         span_rows.append((sp["id"], trace_id, sp["parent"], sp["service"], sp["edge"], sp["kind"],
@@ -584,7 +606,7 @@ def _emit_trace(rng, route, started, mf, total, profiles, dep_by_pair, inc: Inci
     # Healthy DBs get it too (baseline failures correlate), but every failed
     # payments-db span is force-correlated so the demo pivot never lands dry.
     for sp in spans:
-        if sp["status"] not in ("error", "timeout"):
+        if sp["kind"] != "server" or sp["status"] not in ("error", "timeout"):
             continue
         sid = sp["service"]
         force = inc.on and sid == "payments-db"

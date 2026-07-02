@@ -379,10 +379,11 @@ function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: 
 // to that participant (services scope, filtered) — the deliberate way to bring a
 // trace's other services onto the board now that pinning no longer drags them in.
 function TraceMini({ spans, onExplore }: {
-  spans: { id: string; serviceId: string; selfMs: number; status: string }[]
+  spans: { id: string; serviceId: string; selfMs: number; status: string; kind: string }[]
   onExplore: (scope: string, svc: string) => void
 }) {
-  const top = [...spans].sort((a, b) => b.selfMs - a.selfMs).slice(0, 4)
+  // the hops are services doing work — server spans; client spans are network legs.
+  const top = spans.filter(s => s.kind === 'server').sort((a, b) => b.selfMs - a.selfMs).slice(0, 4)
   const max = Math.max(1, ...top.map(s => s.selfMs))
   return (
     <div className="trace-mini">

@@ -218,12 +218,13 @@ void Trace()
 
     var t = d.Trace;
     Console.WriteLine($"trace {t.Id[..8]}  route={t.RequestTypeId}  {t.DurationMs}ms  {t.Status}");
-    int maxSelf = d.Spans.Count == 0 ? 0 : d.Spans.Max(s => s.SelfMs);
+    // hot hop = the busiest SERVER span (client spans are just network legs).
+    int maxSelf = d.Spans.Where(s => s.Kind == "server").Select(s => s.SelfMs).DefaultIfEmpty(0).Max();
     int depth = 0;
     foreach (var s in d.Spans)
     {
-        var hot = s.SelfMs == maxSelf && maxSelf > 0 ? "  <- most self-time" : "";
-        Console.WriteLine($"  {new string(' ', depth * 2)}{s.ServiceId,-18} self {s.SelfMs,4}ms  dur {s.DurationMs,4}ms  {s.Status}{hot}");
+        var hot = s.Kind == "server" && s.SelfMs == maxSelf && maxSelf > 0 ? "  <- most self-time" : "";
+        Console.WriteLine($"  {new string(' ', depth * 2)}{s.ServiceId,-18} {s.Kind,-6} self {s.SelfMs,4}ms  dur {s.DurationMs,4}ms  {s.Status}{hot}");
         if (s.Attributes.ValueKind == JsonValueKind.Object && s.Attributes.EnumerateObject().Any())
             Console.WriteLine($"  {new string(' ', depth * 2)}    {string.Join("  ", s.Attributes.EnumerateObject().Select(p => $"{p.Name}={p.Value}"))}");
         depth++;

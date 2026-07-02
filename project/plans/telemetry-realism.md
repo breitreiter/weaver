@@ -162,11 +162,30 @@ Steps:
 On record so the fiction keeps steering the right way. These change on-screen
 shape and need a rehearsal pass before presenting.
 
-- **③ client + server span pairs.** Makes the topology *derivable from the
-  traces* (client→server pairs) instead of authored alongside them — how Tempo's
-  service graph actually works, and the strongest rebuttal to the case-study
-  critique "you authored the answer; the graph *is* the conclusion." Roughly
-  doubles spans per hop and reshapes the waterfall → new dataset version, rehearse.
+- **③ client + server span pairs — LANDED in datagen (pending canonical regen +
+  rehearsal).** Makes the topology *derivable from the traces* (client→server
+  pairs) instead of authored alongside them — how Tempo's service graph actually
+  works, and the strongest rebuttal to the case-study critique "you authored the
+  answer; the graph *is* the conclusion."
+  - **Model:** one SERVER span per service on the path + one CLIENT span per hop,
+    on the caller, carrying the edge. `2N-1` spans for an N-service path. The
+    client→child-server service pair *is* the edge — verified: reconstructing
+    edges from pairs yields 0 spurious edges vs the `dependencies` table (a subset,
+    since only route-traversed edges see traffic — correct Tempo behaviour).
+  - **Timing:** server `self_ms` = own work (unchanged; the pool-wait discriminator
+    stays on the `payments-db` server span). Client `self_ms` = network only
+    (2×one-way, kept small) so it never outranks a hot server hop. Durations nested,
+    offsets strictly increasing (linear call chain).
+  - **Status propagation:** a call's status is its callee's; a server is as bad as
+    its own work OR the downstream call — so a DB timeout cascades up the whole
+    chain as timeouts (the real picture). `trace.status` = root server status.
+  - **`kind` is now read** (was inert): hot-hop selection (API `TraceResult`, CLI
+    `weaver trace`, web `TraceMini`) considers SERVER spans only, so the hot hop
+    always names a service, not a network leg. CLI waterfall prints `kind`.
+  - **① preserved:** correlated logs fire from server spans only; the demo pivot
+    (hot `payments-db` span → `db.pool.exhausted` log) is intact.
+  - **Owed:** canonical regen + API restart (new dataset version) and a demo
+    rehearsal — the waterfall now shows client+server pairs.
 - **④ OTel status model** — `ERROR` + `http.response.status_code: 504` instead of
   a `timeout` enum value; keep the visible "timed out" notion.
 - **⑤ semantic attr keys on spans** — `db.system`, `server.address`,

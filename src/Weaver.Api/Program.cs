@@ -727,7 +727,10 @@ static SearchResultDto AnomalyResult(AnomalyDto a) =>
 static SearchResultDto TraceResult(WeaverDbContext db, TraceEntity t)
 {
     var spans = db.Spans.Where(s => s.TraceId == t.Id).OrderByDescending(s => s.SelfMs).ToList();
-    var hot = spans.FirstOrDefault();
+    // the "hot hop" names a service doing work — a SERVER span. Client spans carry
+    // only network self-time, so exclude them (else a fast trace's hottest hop is a
+    // network leg, not a service).
+    var hot = spans.FirstOrDefault(s => s.Kind == "server") ?? spans.FirstOrDefault();
     // distinct services the trace crossed — lean metadata stored on the pin. The
     // count drives the drawer's "services in this trace" button without re-fetching
     // the span list.
