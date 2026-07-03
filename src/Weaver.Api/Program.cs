@@ -553,6 +553,30 @@ app.MapGet("/api/search/histogram", (WeaverDbContext db, string? scope, string? 
     return Results.Ok(new HistogramDto(scope, new WindowDto(winStart, winEnd), bucket, counts.Sum(), buckets));
 });
 
+// --- agent SQL charts: run an agent-authored query through the sandbox ------
+// Untrusted SQL (the agent wrote it) → SqlSandbox enforces read-only, single
+// SELECT/WITH, a wall-clock cap, and a row cap. Returns a plain {columns, rows}
+// table; the caller pins the snapshot as chart evidence. Bounds are clamped so a
+// request can't ask for a longer timeout or bigger page than the sandbox allows.
+app.MapPost("/api/charts/exec", (ChartExecReq req) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Sql))
+        return Results.BadRequest(new { error = "sql is required" });
+
+    var timeoutMs = Math.Clamp(req.TimeoutMs ?? SqlSandbox.DefaultTimeoutMs, 100, SqlSandbox.DefaultTimeoutMs);
+    var maxRows = Math.Clamp(req.MaxRows ?? SqlSandbox.DefaultMaxRows, 1, SqlSandbox.DefaultMaxRows);
+
+    try
+    {
+        var r = SqlSandbox.Run(req.Sql, timeoutMs: timeoutMs, maxRows: maxRows);
+        return Results.Ok(new ChartExecDto(r.Columns, r.Rows, r.Rows.Count, r.Truncated));
+    }
+    catch (SqlSandboxException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 // --- node evidence dossier (powers the evidence panel + the pin menu) ------
 app.MapGet("/api/nodes/{id}/evidence", (WeaverDbContext db, string id, string? from, string? to) =>
 {

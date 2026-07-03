@@ -165,6 +165,14 @@ public record HistogramBucketDto(string Ts, long StartMs, int Count);
 public record HistogramDto(string Scope, WindowDto Window, long BucketMs, int Total,
     IReadOnlyList<HistogramBucketDto> Buckets);
 
+// agent-authored SQL chart: the query the agent wrote, run through the read-only
+// sandbox (SqlSandbox). Returns a plain table — Columns + Rows (cells are raw
+// SQLite values: number/string/null) — nothing interpretive. Truncated flags a
+// hit against the row cap. See agent-sql-charts.md.
+public record ChartExecReq(string Sql, int? TimeoutMs = null, int? MaxRows = null);
+public record ChartExecDto(IReadOnlyList<string> Columns,
+    IReadOnlyList<IReadOnlyList<object?>> Rows, int RowCount, bool Truncated);
+
 // node-evidence dossier
 public record NodeSignalDto(string Metric, string ShapeCode, string Prose);
 public record NodeLogGroupDto(string TemplateId, string Level, int Count, string Sample);
