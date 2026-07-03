@@ -1,0 +1,121 @@
+# weaver — agent-authored SQL charts
+
+> **Supersedes the deferred `chart-wall.md`.** That doc cut the human
+> "add to chart wall" builder and folded charts into node-tied evidence —
+> both decisions stand here. What's new: the charts are **authored by the
+> agent from raw SQL**, not assembled by a human from archetype buttons.
+
+The feature in one line: **Claude writes a SQL query against the read-only
+telemetry DB, snapshots the result, and pins it to the board as a chart
+that renders in Recharts on the web and as a prose table in the CLI.** No
+human UI for building complex charts — humans still pin simple metrics.
+
+## The three decisions (locked)
+
+1. **Raw SQL, kept loose — not a query-builder abstraction.** We trade a
+   battle-hardened view catalog for open-ended reach, because we don't yet
+   know what explanations the agent will invent. The named risk (agent
+   writes inaccurate SQL → misleading chart) is logged in
+   `demo-vs-production.md` as an *accepted* demo tradeoff; the canonical
+   view catalog is deferred to post-trial (3–6 months). Not today.
+2. **Snapshot, not re-run-live.** The result rows are captured into the
+   pinned evidence `Payload` at pin time (matching how every other pin
+   snapshots its justifying payload). Keeps arbitrary SQL off the
+   board-poll hot path. Re-run only on an explicit refresh.
+3. **Everything moves to Recharts.** One styling surface. The existing
+   hand-rolled `MetricSparkline` (and, where cheap, `TraceMini`) are
+   re-skinned onto Recharts so pinned simple metrics and agent charts
+   share one visual language. This is a deliberate reversal of
+   `graph-redesign.md`'s "toward hand-rolled SVG" direction, made because
+   the demo values a single consistent chart aesthetic over avoiding the
+   dependency.
+
+## Scope boundaries
+
+- **Web only.** The CLI never renders a visual chart — the no-glyph rule
+  (`cli.md`) stands. CLI shows the chart's result as a small prose table +
+  the `ch:` id so the agent can sanity-check the numbers. CLI = the
+  numbers, web = the visual. (Same split the trajectory encoding already
+  uses.)
+- **No human chart builder.** Humans pin *simple metrics* (one gesture,
+  already exists → renders as a Recharts mini-line). Complex/novel charts
+  arrive *only* via the agent's SQL path. This is already the design
+  direction, not new work — just a constraint to honor.
+
+## The security sandbox (the risk-bearing piece — build & test first)
+
+Raw SQLite has a real but bounded DoS/abuse surface. Close it with a
+dedicated hardened exec path — a well-trodden "read-only SQL console"
+pattern:
+
+| Risk | Guard |
+|---|---|
+| Writes / DDL | dedicated `Microsoft.Data.Sqlite` connection, `Mode=ReadOnly` + `PRAGMA query_only=ON` |
+| `ATTACH` (e.g. to `boards.db`), multi-statement tricks, `PRAGMA` | **single-statement gate**: exactly one `SELECT`/`WITH`, reject stray `;` — kills ATTACH/PRAGMA/multi-stmt by construction |
+| `load_extension` | leave disabled (Microsoft.Data.Sqlite default) |
+| runaway scan / recursive-CTE bomb (the real DoS) | **wall-clock cancel**: timer → `SqliteCommand.Cancel()` (`sqlite3_interrupt`) at ~2s |
+| unbounded result rows → memory | read at most N rows (~5,000), then stop |
+
+Output is `{ columns, rows }`. Nothing interpretive — pure enumeration,
+consistent with `analysis-architecture.md`.
+
+## The chart artifact
+
+A chart is a new **evidence kind**, reusing the entire pin → board →
+`@`-ref → document pipeline (no new plumbing):
+
+- **Kind** `chart`, hung on a node like any evidence (anomalies already
+  hang on a subject). Cross-node/fleet charts attach to the most relevant
+  subject the agent picks.
+- **Typed id** `ch:<...>` — needs a result-builder + `/api/search/resolve`
+  case in `Program.cs`, and a prefix in the CLI's `IsTypedId`.
+- **Payload** (`EvidenceEntity.Payload`, JSON snapshot): `{ sql, title,
+  type: line|bar|area|scatter, xColumn, yColumns[], columns, rows }`.
+  `sql` is kept for provenance/refresh; `rows` is the snapshot that
+  renders.
+- **Rendered** in `web/src/Evidence.tsx` alongside the (now Recharts)
+  metric card, keyed off `type`. `@`-referenceable in the doc exactly like
+  any finding — the autocomplete is already generic over `refId`.
+
+## Command surface
+
+- **CLI** `weaver chart --sql "<q>" --title "<t>" [--type line|bar|…]
+  [--x <col>] [--y <col,col>] [--pin <service>]` → runs via the sandbox
+  endpoint, prints the result as a prose table + the `ch:` id, and (with
+  `--pin`) snapshots it onto the board. Mirrors the existing `pin` flow.
+- **API** `POST /api/charts/exec` (sql, title, render spec) → sandbox →
+  `{ columns, rows }`. Pin lands through the existing `POST
+  /api/boards/{id}/pin` with kind `chart`.
+
+## Files touched
+
+- `src/Weaver.Api/Program.cs` — sandbox exec path, `/api/charts/exec`,
+  `ch:` result-builder + `/resolve` case.
+- `src/Weaver.Core/BoardEntities.cs` — `chart` kind (no schema change if it
+  rides `Kind`/`Payload`; confirm no enum constraint blocks it).
+- `src/Weaver.Contracts/Dtos.cs` — chart exec req/resp + render-spec shape.
+- `src/Weaver.Cli/Program.cs` — `chart` verb, `IsTypedId` `ch:` prefix,
+  prose-table render.
+- `web/src/api.ts` — `charts.exec` binding (+ the already-unused
+  `histogram` one if we want volume charts).
+- `web/src/Evidence.tsx` — Recharts renderer; re-skin `MetricSparkline`.
+- `web/package.json` — Recharts `^3.8.1` already present; just import it.
+
+## Build order
+
+1. Recharts wired in; `MetricSparkline` re-skinned onto it (one styling
+   surface). **S**
+2. Hardened SQL sandbox + `/api/charts/exec` — build and pressure-test the
+   five guards *first*, before anything renders. **M**
+3. `chart` evidence kind + `ch:` typed id, end to end (entity → DTO →
+   resolve → IsTypedId). **M**
+4. `weaver chart` CLI verb (prose table + `--pin`). **S**
+5. Recharts renderer for pinned chart evidence in the web. **S–M**
+
+## Deferred / out of scope (named, not forgotten)
+
+- **Canonical view catalog** — the production hardening for the inaccurate
+  -SQL risk; revisit after real user trials (`demo-vs-production.md`).
+- **Re-run-live charts / refresh-on-poll** — snapshot only for now.
+- **Cross-node "chart wall" as a fourth pane** — charts stay node-tied
+  evidence (`chart-wall.md`'s folding decision holds).

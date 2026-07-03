@@ -128,6 +128,35 @@ scale while the architecture stays honest about the real world.
   asserted verdict. The interface (operator/agent owns the conclusion)
   doesn't change; the assistance behind it can grow.
 
+## Agent charts: raw SQL now, a canonical view catalog later
+
+- **The big-hammer temptation:** a battle-hardened catalog of hardwired,
+  reviewed chart views — the agent picks from a vetted menu, every query
+  known-correct.
+- **Demo choice:** the agent writes **raw SQL** against the read-only
+  telemetry DB (single `SELECT`/`WITH`, sandboxed — see
+  `agent-sql-charts.md`), and the result is snapshotted into a pinned
+  chart. Loose and open-ended on purpose.
+- **Why it's right here — and the honest risk:** we don't yet know what
+  views matter. The whole point of an agent charting surface is that it
+  invents explanations no one pre-enumerated ("self-time by service across
+  the checkout route," "error-template volume against p99") — flexibility
+  we'd amputate by shipping a fixed catalog on day one. **The real risk,
+  named plainly:** the agent can write *inaccurate* SQL and produce a
+  confidently-misleading chart. (Learned the hard way in a real production
+  app — Claude wrote wrong SQL, the chart lied.) At demo scale, with a
+  human co-author reading every chart it draws, that risk is acceptable;
+  the flexibility is worth more than the guardrail. This is the one
+  tradeoff here that trades *safety* for reach, not infra for scale — so
+  it's the one to watch.
+- **IRL / the seam:** after real user trials (call it 3–6 months of
+  watching which queries actually recur and which ones mislead), you build
+  the **canonical view catalog** — the recurring shapes become vetted,
+  named, correctness-tested views, and raw SQL narrows to an advanced
+  escape hatch behind them. Same chart artifact, same pin/render surface;
+  only the query provenance hardens. Building that catalog *today* would be
+  guessing at the menu before we've seen the appetite — too early.
+
 ---
 
 ## A different kind of "no"
