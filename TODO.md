@@ -163,3 +163,8 @@ mid-incident tool should have. Cross-cutting, not a one-screen tweak.
 
 - [ ] Home page spruce-up — dull; deferred.
 - [ ] Board / node layout — Joseph noodling in Figma. *Blocked on his direction.*
+- [ ] **Bump SQLite — good-citizen dependency hygiene.** NU1903 high-severity
+      advisory on `SQLitePCLRaw.lib.e_sqlite3 2.1.11`, transitive via EF Core
+      10.0.8 (surfaced building the SQL sandbox, `project/plans/agent-sql-charts.md`).
+      Still a demo/PoC so not urgent, but no reason to ship a known advisory —
+      bump when convenient.
