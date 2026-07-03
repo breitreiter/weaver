@@ -43,6 +43,7 @@ try
         case "evidence": NodeEvidence(); break;
         case "board": Board(); break;
         case "pin": Pin(); break;
+        case "chart": Chart(); break;
         case "unpin": Unpin(); break;
         case "doc": Doc(); break;
         case "help" or "" or null: Help(); break;
@@ -84,6 +85,10 @@ void Help()
           board show [id|url]           print the board (pinned services + evidence)
           pin <id|service>              pin a search result by its typed id, OR a
               [--as K --aspect A]         service + manual evidence (--note/--evidence/--at)
+          chart --sql "q" --title "t"   author a chart from raw SQL (read-only sandbox):
+              [--type line|bar|area|scatter]  prints the rows as a table + a ch: id;
+              [--x col] [--y a,b]         --pin <service> snapshots it to the board.
+              [--pin <service>]           the visual render is web-only.
           unpin <evidence-id>           drop one finding
           unpin <service> --all         remove a service and its evidence
           doc show [id|url]             print the co-edited document (+ version)
@@ -500,11 +505,99 @@ void Pin()
     Hint("weaver pin an:<service>:<metric>   (pin a search result by id)", "weaver search anomalies");
 }
 
-// a typed search-result id: known prefix + ':' (an:svc:metric, tr:…, log:…, me:…, ce:…, svc:…).
+// Author a chart from raw SQL: run it through the read-only sandbox, print the
+// result as a prose table + the `ch:` id, and (with --pin <service>) snapshot it onto
+// the board as chart evidence. The VISUAL render is web-only (cli.md no-glyph rule) —
+// here we show the numbers so the agent can sanity-check them. See agent-sql-charts.md.
+void Chart()
+{
+    var sql = argv.Opt("sql");
+    if (string.IsNullOrWhiteSpace(sql)) { Console.Error.WriteLine("weaver: chart needs --sql \"<query>\"."); Environment.Exit(2); return; }
+    var title = argv.Opt("title");
+    if (string.IsNullOrWhiteSpace(title)) { Console.Error.WriteLine("weaver: chart needs --title \"<t>\" (it names the ch: id)."); Environment.Exit(2); return; }
+
+    // --pin names BOTH the subject node and the intent to save. Soft-resolve a typo'd
+    // service (did-you-mean) like `pin`; a cross-node subject still passes through.
+    var subject = argv.Opt("pin") is { } pv && !string.IsNullOrWhiteSpace(pv) ? ResolveService(pv, strict: false) : null;
+    // resolve the board up-front when we'll pin, so a missing board fails fast (before exec).
+    var board = subject is not null ? ResolveBoard() : null;
+    var yCols = argv.Opt("y")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    var exec = api.Post<ChartExecDto>("/api/charts/exec", new
+    {
+        sql, title, subject, type = argv.Opt("type"), xColumn = argv.Opt("x"), yColumns = yCols,
+    });
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+
+    PrintTable(exec.Columns, exec.Rows);
+    if (exec.Truncated) Console.WriteLine($"  … truncated at {exec.RowCount} rows (raise --limit on the query or narrow it).");
+    var chartId = exec.Result?.Id ?? "ch:?";
+    Console.WriteLine();
+
+    if (subject is not null && exec.Result is { } r)
+    {
+        api.Post<CreatedDto>($"/api/boards/{board}/pin",
+            new { serviceIds = r.Pin.NodeIds, evidence = r.Pin.Evidence, label = title });
+        Console.WriteLine($"pinned chart {chartId}  → {subject}");
+        Hint("weaver board show", $"weaver doc append \"… see @{chartId}\"");
+    }
+    else
+    {
+        Console.WriteLine($"chart {chartId}  (not pinned — add --pin <service> to save it to the board)");
+        Hint($"weaver chart --sql \"…\" --title \"{title}\" --pin <service>");
+    }
+}
+
+// A plain aligned table for a chart's rows — numbers right-aligned, cells capped so a
+// runaway column can't blow the terminal. Cells arrive as JsonElement (raw SQLite
+// number/string/null); nothing interpretive is added. Web renders the visual; this is
+// the numbers.
+static void PrintTable(IReadOnlyList<string> cols, IReadOnlyList<IReadOnlyList<object?>> rows)
+{
+    var n = cols.Count;
+    if (n == 0) { Console.WriteLine("  (no columns)"); return; }
+    var cells = rows.Select(r => Enumerable.Range(0, n).Select(i => Cell(i < r.Count ? r[i] : null)).ToArray()).ToList();
+    var numeric = new bool[n];
+    var widths = new int[n];
+    for (var i = 0; i < n; i++)
+    {
+        widths[i] = Math.Min(40, Math.Max(cols[i].Length, cells.Count == 0 ? 0 : cells.Max(c => c[i].Length)));
+        numeric[i] = rows.Count > 0 && rows.All(r => i < r.Count && r[i] is JsonElement je && je.ValueKind == JsonValueKind.Number);
+    }
+    string Fmt(string[] c) => "  " + string.Join("  ", Enumerable.Range(0, n).Select(i =>
+    {
+        var s = c[i].Length > widths[i] ? c[i][..widths[i]] : c[i];
+        return numeric[i] ? s.PadLeft(widths[i]) : s.PadRight(widths[i]);
+    }));
+    Console.WriteLine(Fmt(cols.ToArray()));
+    Console.WriteLine("  " + string.Join("  ", widths.Select(w => new string('-', w))));
+    foreach (var c in cells) Console.WriteLine(Fmt(c));
+    if (rows.Count == 0) Console.WriteLine("  (0 rows)");
+}
+
+static string Cell(object? o) => o switch
+{
+    null => "",
+    JsonElement e => e.ValueKind switch
+    {
+        JsonValueKind.Null => "",
+        JsonValueKind.String => e.GetString() ?? "",
+        JsonValueKind.Number => e.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => e.GetRawText(),
+    },
+    _ => o.ToString() ?? "",
+};
+
+// a typed search-result id: known prefix + ':' (an:svc:metric, tr:…, log:…, me:…, ce:…, svc:…, ch:…).
+// `ch:` (an authored SQL chart) resolves to a teaching error — charts are minted by
+// `weaver chart`, not pinned by id — but it's a typed id so it routes there, not into
+// the bare-service did-you-mean path.
 static bool IsTypedId(string s)
 {
     var c = s.IndexOf(':');
-    return c > 0 && s[..c] is "an" or "tr" or "log" or "me" or "ce" or "svc";
+    return c > 0 && s[..c] is "an" or "tr" or "log" or "me" or "ce" or "svc" or "ch";
 }
 
 void Unpin()

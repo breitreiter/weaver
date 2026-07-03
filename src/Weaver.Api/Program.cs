@@ -443,8 +443,13 @@ app.MapGet("/api/search/resolve", (WeaverDbContext db, string id) =>
                 ? Results.Ok(AnomalyResult(an))
                 : Results.NotFound(new { error = $"'{id}' is not currently an anomaly at z≥3 — pin it manually if you mean to." });
         }
+        case "ch":
+            // a chart is authored (sql + render spec), not a telemetry row — there's
+            // nothing here to rebuild it from, and we snapshot rather than re-run.
+            return Results.BadRequest(new { error =
+                "a chart is authored, not resolved — create it with `weaver chart --sql … --title … --pin <service>`" });
         default:
-            return Results.BadRequest(new { error = $"unknown id prefix '{prefix}' (svc|log|tr|ce|an|me)" });
+            return Results.BadRequest(new { error = $"unknown id prefix '{prefix}' (svc|log|tr|ce|an|me|ch)" });
     }
 
     static IResult NotFound(string id) => Results.NotFound(new { error = $"no result for id '{id}'" });
@@ -563,13 +568,21 @@ app.MapPost("/api/charts/exec", (ChartExecReq req) =>
     if (string.IsNullOrWhiteSpace(req.Sql))
         return Results.BadRequest(new { error = "sql is required" });
 
+    if (req.Type is { } ty && ty is not ("line" or "bar" or "area" or "scatter"))
+        return Results.BadRequest(new { error = $"unknown chart type '{ty}' (line|bar|area|scatter)" });
+
     var timeoutMs = Math.Clamp(req.TimeoutMs ?? SqlSandbox.DefaultTimeoutMs, 100, SqlSandbox.DefaultTimeoutMs);
     var maxRows = Math.Clamp(req.MaxRows ?? SqlSandbox.DefaultMaxRows, 1, SqlSandbox.DefaultMaxRows);
 
     try
     {
         var r = SqlSandbox.Run(req.Sql, timeoutMs: timeoutMs, maxRows: maxRows);
-        return Results.Ok(new ChartExecDto(r.Columns, r.Rows, r.Rows.Count, r.Truncated));
+        var exec = new ChartExecDto(r.Columns, r.Rows, r.Rows.Count, r.Truncated);
+        // a render spec (Title) turns the raw table into a pinnable chart artifact —
+        // the only place a `ch:` chart is minted (authored, not resolved from telemetry).
+        var result = string.IsNullOrWhiteSpace(req.Title) ? null
+            : ChartResult(req.Sql, req.Subject, req.Title!, req.Type, req.XColumn, req.YColumns, exec);
+        return Results.Ok(exec with { Result = result });
     }
     catch (SqlSandboxException ex)
     {
@@ -713,6 +726,11 @@ static string EvidenceSummary(string kind, JsonElement p)
             return S(p, "summary") != "" ? S(p, "summary") : S(p, "kind");
         case "metric":
             return Join(" · ", S(p, "shapeCode"), S(p, "prose"));
+        case "chart":
+        {
+            var rows = p.TryGetProperty("rows", out var rv) && rv.ValueKind == JsonValueKind.Array ? rv.GetArrayLength() : 0;
+            return Join(" · ", S(p, "title"), S(p, "type"), rows > 0 ? $"{rows} rows" : "");
+        }
         case "trace":
         {
             // a UI search pin nests the trace under `trace`; a manual pin may be flat.
@@ -780,6 +798,36 @@ static SearchResultDto MetricResult(Analysis.SeriesInput s)
         new { tr.ShapeCode, tr.Prose, tr.Min, tr.Max, tr.Mean },
         new PinTargetDto([s.Id], new EvidenceRefDto("metric", s.Metric, null, new { tr.ShapeCode, tr.Prose }, RefId: $"me:{s.Id}:{s.Metric}")));
 }
+// An agent-authored SQL chart, shaped as a pinnable result. Unlike the other
+// builders this reads no telemetry row — the chart is AUTHORED (sql + render spec),
+// so its whole existence is the snapshot captured here. Id mirrors an:<subject>:
+// <aspect> → ch:<subject>:<title-slug>, so it rides the same pin dedup (service +
+// kind + aspect + at) and is @-referenceable in the doc like any finding.
+static SearchResultDto ChartResult(string sql, string? subject, string title, string? type,
+    string? xColumn, IReadOnlyList<string>? yColumns, ChartExecDto exec)
+{
+    var t = string.IsNullOrWhiteSpace(type) ? "line" : type;
+    var subj = string.IsNullOrWhiteSpace(subject) ? "(fleet)" : subject!;
+    var slug = Slug(title);
+    var id = $"ch:{subj}:{slug}";
+    var payload = new { sql, title, type = t, xColumn, yColumns, exec.Columns, exec.Rows };
+    return new SearchResultDto(
+        "chart", id, title, $"{t} · {exec.RowCount} rows · {exec.Columns.Count} cols", payload,
+        new PinTargetDto(string.IsNullOrWhiteSpace(subject) ? [] : [subject!],
+            new EvidenceRefDto("chart", slug, null, payload, RefId: id)));
+}
+
+// title -> a short, stable, url/id-safe slug (the chart's aspect key).
+static string Slug(string s)
+{
+    var sb = new System.Text.StringBuilder(s.Length);
+    foreach (var ch in s.Trim().ToLowerInvariant())
+        sb.Append(char.IsLetterOrDigit(ch) ? ch : '-');
+    var slug = string.Join('-', sb.ToString().Split('-', StringSplitOptions.RemoveEmptyEntries));
+    if (slug.Length > 40) slug = slug[..40].TrimEnd('-');
+    return slug.Length == 0 ? "chart" : slug;
+}
+
 static string NewId() => Guid.NewGuid().ToString("N")[..8];
 static string NowIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 

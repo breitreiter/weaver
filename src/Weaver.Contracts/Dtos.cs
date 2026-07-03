@@ -169,9 +169,19 @@ public record HistogramDto(string Scope, WindowDto Window, long BucketMs, int To
 // sandbox (SqlSandbox). Returns a plain table — Columns + Rows (cells are raw
 // SQLite values: number/string/null) — nothing interpretive. Truncated flags a
 // hit against the row cap. See agent-sql-charts.md.
-public record ChartExecReq(string Sql, int? TimeoutMs = null, int? MaxRows = null);
+//
+// When a render spec is supplied (Title + optional Subject/Type/X/Y), exec also
+// builds the pinnable chart artifact (Result) — a SearchResultDto carrying the
+// `ch:<subject>:<slug>` id and a snapshot pin target, byte-identical to what a
+// future UI "author chart" gesture would pin. A chart is AUTHORED, not found in
+// telemetry, so this exec call is the only place it can be minted (there's no
+// telemetry row for /resolve to rebuild it from — snapshot, not re-run-live).
+public record ChartExecReq(string Sql, int? TimeoutMs = null, int? MaxRows = null,
+    string? Title = null, string? Subject = null, string? Type = null,
+    string? XColumn = null, IReadOnlyList<string>? YColumns = null);
 public record ChartExecDto(IReadOnlyList<string> Columns,
-    IReadOnlyList<IReadOnlyList<object?>> Rows, int RowCount, bool Truncated);
+    IReadOnlyList<IReadOnlyList<object?>> Rows, int RowCount, bool Truncated,
+    SearchResultDto? Result = null);
 
 // node-evidence dossier
 public record NodeSignalDto(string Metric, string ShapeCode, string Prose);
