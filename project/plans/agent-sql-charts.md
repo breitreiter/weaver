@@ -101,16 +101,55 @@ A chart is a new **evidence kind**, reusing the entire pin → board →
 - `web/src/Evidence.tsx` — Recharts renderer; re-skin `MetricSparkline`.
 - `web/package.json` — Recharts `^3.8.1` already present; just import it.
 
-## Build order
+## Build order & status
 
 1. Recharts wired in; `MetricSparkline` re-skinned onto it (one styling
-   surface). **S**
-2. Hardened SQL sandbox + `/api/charts/exec` — build and pressure-test the
-   five guards *first*, before anything renders. **M**
+   surface). **S** — *not started.*
+2. ✅ **DONE** (commit `05b69f8`) — hardened SQL sandbox + `/api/charts/exec`.
+   See "Status: where we are" below.
 3. `chart` evidence kind + `ch:` typed id, end to end (entity → DTO →
-   resolve → IsTypedId). **M**
+   resolve → IsTypedId). **M** — *next.*
 4. `weaver chart` CLI verb (prose table + `--pin`). **S**
 5. Recharts renderer for pinned chart evidence in the web. **S–M**
+
+## Status: where we are (resume here)
+
+**Step 2 is complete and verified live.** Shipped:
+- `src/Weaver.Core/SqlSandbox.cs` — `SqlSandbox.Run(sql, dbPath?, timeoutMs, maxRows)`
+  → `SqlResult(Columns, Rows, Truncated)`; throws `SqlSandboxException` on any
+  rejected/failed query. All five guards in place.
+- `tests/Weaver.Core.Tests/SqlSandboxTests.cs` — 24 tests, green in ~560ms.
+- `POST /api/charts/exec` (`Program.cs`, after the histogram endpoint) —
+  `ChartExecReq{ sql, timeoutMs?, maxRows? }` → `ChartExecDto{ columns, rows,
+  rowCount, truncated }`; bounds clamped to the sandbox limits. DTOs in
+  `Dtos.cs` (just above the node-evidence dossier records).
+- Verified live vs `data/weaver.db`: happy-path GROUP BY over `metric_samples`
+  ok; `DROP`/multi-statement → 400; runaway recursive-CTE cancelled in ~0.8s
+  at an 800ms budget.
+
+**Gotcha banked (don't relearn it):** `SqliteCommand.Cancel()` is a **no-op**
+in Microsoft.Data.Sqlite and `CommandTimeout` only bounds lock-waits — neither
+stops a running scan. The wall-clock cancel MUST use the native
+`sqlite3_progress_handler` (runs on the query thread). A first cut using
+`Cancel()` spun a CPU core for 15 min. When running tests that can execute
+arbitrary SQL, wrap the run in `timeout --signal=KILL <n>` as a backstop.
+
+**Loose end (not ours, worth a bump):** NU1903 high-severity advisory on
+`SQLitePCLRaw.lib.e_sqlite3 2.1.11`, transitive via EF Core 10.0.8.
+
+### Step 3 — the concrete next moves
+- **Entity/DTO:** confirm `EvidenceEntity.Kind` has no enum/check constraint
+  blocking a new `chart` value (it's a plain string column — expected fine).
+  Payload shape: `{ sql, title, type, xColumn, yColumns[], columns, rows }`.
+- **Typed id `ch:<...>`:** decide the id body. Unlike `an:svc:metric` there's no
+  natural subject key — likely `ch:<boardId-or-node>:<slug>` or a short hash of
+  the sql+title. Needs: a result-builder + a `/api/search/resolve` case in
+  `Program.cs`, and the `ch` prefix added to `IsTypedId` in `Cli/Program.cs`.
+- **Pin path:** rides the existing `POST /api/boards/{id}/pin` with kind
+  `chart`; the exec result is snapshotted into `Payload` at pin time (decision
+  2 — snapshot, not re-run-live).
+- **Open Q to resolve first:** what node does a cross-node chart hang on? (The
+  agent picks the most relevant subject; a chart is still node-tied evidence.)
 
 ## Deferred / out of scope (named, not forgotten)
 
