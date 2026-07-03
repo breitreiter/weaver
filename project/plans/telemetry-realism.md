@@ -1,8 +1,10 @@
 # weaver — telemetry realism (steering the fiction toward real traces)
 
-Status: **first cut landed** (items ① + ②) — datagen + backend plumbing done,
-verified on scratch DBs; **canonical regen + API restart still owed** (see below).
-Items ③–⑥ remain on record as a later "v2 dataset" milestone.
+Status: **①②③ landed and live** — datagen + backend done, canonical DBs
+regenerated, API restarted, and each verified end-to-end against the live API
+(correlation pivot, hex ids, and the paired-span waterfall). Items ④–⑥ remain
+on record as the rest of the "v2 dataset" milestone; ③'s only open thread is a
+demo rehearsal (the waterfall now shows client+server pairs).
 
 ### Decisions locked
 
@@ -22,7 +24,8 @@ Items ③–⑥ remain on record as a later "v2 dataset" milestone.
    **Landed:** `traces` search scope now filters by trace id; the web log card
    shows a "trace" pivot button (→ `search traces --trace <id>`), and `weaver
    logs` prints a `→ tr:<id8>` marker on correlated lines (follow with `weaver
-   trace <id>`). Still pending the canonical regen + API restart to test live.
+   trace <id>`). Verified live: a `db.pool.exhausted` log pivots to its `checkout`
+   trace, hot hop `payments-db`.
 
 ## Why this exists
 
@@ -184,7 +187,9 @@ shape and need a rehearsal pass before presenting.
     always names a service, not a network leg. CLI waterfall prints `kind`.
   - **① preserved:** correlated logs fire from server spans only; the demo pivot
     (hot `payments-db` span → `db.pool.exhausted` log) is intact.
-  - **Owed:** canonical regen + API restart (new dataset version) and a demo
+  - **Live:** canonical DBs regenerated, API restarted, walked end-to-end — a
+    checkout timeout shows the full client+server chain, hot hop `payments-db`,
+    topology derivable from the pairs, log pivot intact. **Owed:** a demo
     rehearsal — the waterfall now shows client+server pairs.
 - **④ OTel status model** — `ERROR` + `http.response.status_code: 504` instead of
   a `timeout` enum value; keep the visible "timed out" notion.
