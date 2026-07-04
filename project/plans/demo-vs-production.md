@@ -128,6 +128,35 @@ scale while the architecture stays honest about the real world.
   asserted verdict. The interface (operator/agent owns the conclusion)
   doesn't change; the assistance behind it can grow.
 
+## Knowledge retrieval: authored self-situating chunks, not a contextual-retrieval pipeline
+
+- **The big-hammer temptation:** a real RAG ingest pipeline for the
+  knowledge bag — mechanical chunking of source documents, **Contextual
+  Retrieval** (Anthropic, 2024: a cheap model prepends a
+  chunk-situating blurb before indexing — it lifts BM25 as well as
+  embeddings), plus vector search on top.
+- **Demo choice:** small authored chunks (one concept, 1–3 paragraphs)
+  with a hard authoring rule — *every chunk's title carries its
+  situating keywords* — indexed by the same FTS5 we already run.
+  Multi-chunk docs are just chunks sharing a `doc_ref`, ordered by
+  `seq`, with a keep-reading affordance on the drill-in verb.
+- **Why it's right here:** contextual retrieval exists to retrofit
+  context onto chunks *mechanically split from pre-existing documents*.
+  We have no pre-existing documents — the chunks are authored fixtures,
+  so the enrichment happens at authoring time for free: a well-titled
+  chunk *is* a contextually-enriched chunk (title+body is what FTS5
+  matches). And the embeddings half stays redundant for the same reason
+  as semantic log search above: the agent at the center is already the
+  semantic layer. Corpus is dozens of chunks, not millions.
+- **IRL / the seam:** at production scale — real wikis, real
+  post-mortems, Slack exports — you'd run exactly that ingest pipeline:
+  mechanical chunking, a cheap model generating each chunk's contextual
+  header, contextual BM25 + embeddings, and reranking. The seam is the
+  chunk shape itself: `title` (situating context) + `body` + `doc_ref`/
+  `seq` lineage is what such a pipeline *emits*, so ingest hardens from
+  "hand-authored" to "generated" behind the same table, the same FTS
+  index, and the same search scope. (See `knowledge-snippets.md`.)
+
 ## Agent charts: raw SQL now, a canonical view catalog later
 
 - **The big-hammer temptation:** a battle-hardened catalog of hardwired,

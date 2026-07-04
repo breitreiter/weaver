@@ -86,6 +86,27 @@ Follow-ups:
       idiom); the window is the shared time domain that unlocks synchronized hover.
       **Design complete, not built** — see `board-time-windows.md`.
 
+## Knowledge snippets — the bag of factoids (planned, not built)
+
+A new stored data source: blended chunks of docs / runbooks / prior-incident
+write-ups / prior board text, each attached to one service, FTS-searchable,
+timeless (no timestamp → exempt from every window filter). Chunks are smol
+(one concept, 1–3 ¶) with `doc_ref`/`seq` lineage — a coherent doc is a chain
+of chunks, walked via a keep-reading affordance. Titles must self-situate
+(hand-made Contextual Retrieval — see `demo-vs-production.md`). New
+`knowledge` search scope + `kn:` typed id + a dossier section. The hard part
+is authoring discipline (no answer labels; decoys, staleness, and the odd
+context-poor chunk are the texture). Plan:
+`project/plans/knowledge-snippets.md`.
+
+- [ ] datagen: `knowledge_snippets` table + FTS5 + scenario-spec passthrough;
+      author the flash-sale snippet set.
+- [ ] Core/Contracts/API: entity + guards, DTO, `knowledge` scope, resolve,
+      facets, result builder (`kn:` id, evidence kind `knowledge`, `At = null`).
+- [ ] Dossier + CLI: `NodeEvidenceDto.knowledge` (un-windowed) + `evidence`
+      section + a read-full drill-in verb.
+- [ ] Web: scope + result card + `knowledge` evidence-kind card.
+
 ## CLI ↔ UI alignment (the co-researcher lift)
 
 See `project/plans/cli-co-researcher.md` (2026-06-10 review: board contract is
