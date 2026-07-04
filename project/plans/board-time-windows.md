@@ -106,6 +106,40 @@ under this design new charts are time-x only, and that bar becomes legacy/deferr
 > `$__timeGroup` is the decade-old idiom; borrow it whole. The residual risk isn't the
 > mechanism, it's blast radius — but chopping to time-x-only *is* the mitigation.
 
+### 2b. The render-mode set (canonical, time-x only).
+
+More battle-tested prior art: **SolarWinds PerfStack** (2016) converged, by hand, on a
+tiny shape set — and its "drag a metric, the tool picks the viz, you don't choose"
+model is our design stance one level up. Adopt its convergence. The modes, all
+**time-x**:
+
+- **line** (single or multi-series) — numeric value trajectories. *Area* is the same
+  mode with a fill, not a separate type.
+- **count-bar** — bucketed counts over time (`x = time buckets, y = count`): the
+  log / trace / change **volume** shape, already backed by `/api/search/histogram`.
+  This is the honest home of the deprecated categorical bar — count *by time bucket*,
+  never *by category*.
+
+**Auto-selection = Claude picks the render spec** (type / x / y) from the query shape
+*and* the semantic intent — same no-menu simplicity as PerfStack, but the selector is
+model judgment, not a heuristic table (Claude knows "this is volume → count-bar," not
+just "two numeric columns → scatter"). The shape prior Claude reasons from:
+numeric-single/multi → line; counts-over-buckets → count-bar.
+
+Cut / deferred:
+
+- **scatter — CUT.** Numeric×numeric has no time axis; it violates x-is-always-time,
+  and PerfStack never needed it. Deprecates the scatter shipped in `agent-sql-charts.md`.
+- **state-line — deferred** (categorical/step: alert fine-vs-firing, state-machine
+  status). Time-x and the highest-value gap, but *more than a render mode*: weaver
+  stores no status (health is derived, never recorded — the constitution), so a
+  state-line must plot a **live-derived** state series (e.g. z-over-threshold →
+  firing), which needs a derive-a-state primitive behind it.
+- **stacked / grouped bar — deferred.** Categorical *series* on a time x (still time-x);
+  a render mode, not an axis exception.
+- **heat-line (thin bucketed-count strip) — deferred.** PerfStack considered and cut it
+  for UX simplicity; same chopping instinct here.
+
 ### 3. Windows are seeded explicitly and kept few — an AI-curation discipline.
 
 Windows do **not** auto-populate from every timestamp. Claude seeds them deliberately,

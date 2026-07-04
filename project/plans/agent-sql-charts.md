@@ -243,6 +243,12 @@ Web-only, no backend touch — the snapshot already reached the client
   time window (re-run on window *selection*, not on the poll); the pin-time
   snapshot demotes to a default-window cache. The snapshot rule still holds for
   every other evidence kind.
+- **Render set narrowed by `board-time-windows.md` to time-x-only.** The shipped
+  `line | bar | area | scatter` becomes the PerfStack-derived canonical set:
+  **line + count-bar** (area = a line fill). **`scatter` is CUT** (numeric×numeric
+  has no time axis — violates x-is-always-time) alongside the categorical bar
+  (→ count *by time bucket*, not by category). `state-line`, `stacked-bar`, and
+  `heat-line` are deferred. See that plan's "render-mode set (2b)".
 - **Re-run-live charts / refresh-on-poll** — snapshot only for now.
 - **Cross-node "chart wall" as a fourth pane** — charts stay node-tied
   evidence (`chart-wall.md`'s folding decision holds).
