@@ -110,18 +110,22 @@ A chart is a new **evidence kind**, reusing the entire pin → board →
 3. ✅ **DONE** (uncommitted — held per odd-hours rule) — `chart` evidence kind +
    `ch:` typed id, end to end (entity → DTO → resolve → IsTypedId). Verified live.
    See "Status" below.
-4. ✅ **DONE** (uncommitted — held per odd-hours rule) — `weaver chart` CLI verb
-   (prose table + `--pin`). Verified live. See "Status" below.
-5. Recharts renderer for pinned chart evidence in the web. **S–M** — *next (last).*
+4. ✅ **DONE** (commit `0029a6a`) — `weaver chart` CLI verb (prose table +
+   `--pin`). Verified live. See "Status" below.
+5. ✅ **DONE** — Recharts renderer for pinned chart evidence in the web +
+   `MetricSparkline` re-skinned onto Recharts. Verified in-browser. See "Status".
 
-## Status: where we are (resume here)
+**The feature is complete** — agent authors SQL → CLI table + `ch:` pin → web
+Recharts render, end to end.
 
-**Steps 2, 3, and 4 are complete and verified live. Resume at step 5** (the last one
-— the Recharts renderer for pinned chart evidence in the web; see "Step 5 — the
-concrete next moves" below). The whole agent-authored SQL → CLI table + `ch:` pin
-path works end to end; only the web VISUAL is missing. Steps 3+4's uncommitted
-changes are held per the odd-hours rule; commit them (with step 5) when the window
-opens.
+## Status: COMPLETE — all five steps landed and verified
+
+The full feature works end to end: the agent writes SQL → `weaver chart` runs it
+through the read-only sandbox and prints a prose table + the `ch:` id → `--pin`
+snapshots it onto the board → the web renders it in Recharts, `@`-referenceable in
+the doc like any finding. Steps 2–4 are committed (`05b69f8`, `0029a6a`); step 5's
+web changes are the last piece. What remains is all in "Deferred / out of scope"
+below — nothing blocking.
 
 **Step 2** — shipped:
 - `src/Weaver.Core/SqlSandbox.cs` — `SqlSandbox.Run(sql, dbPath?, timeoutMs, maxRows)`
@@ -198,25 +202,33 @@ not rebuilt by `/resolve` from telemetry:
   `@ch:…`; bad type + write-SQL both surface the server/sandbox 400; `@`-ref lands in
   the doc. Full suite green (31 tests). No new API/DTO work — CLI is a thin relay.
 
-### Step 5 — the concrete next moves (Recharts web renderer — LAST step)
-Everything the web needs is already wired: Recharts `^3.8.1` is in `package.json`
-(not yet imported anywhere), and the chart snapshot already reaches the client —
-`EvidenceItem.payload` (`web/src/api.ts:43`) carries `{ sql, title, type, xColumn,
-yColumns, columns, rows }`, projected by `ToEvidenceDto` (`Program.cs`). So step 5 is
-web-only, no backend touch.
-- **Render hook:** `web/src/Evidence.tsx:106` already switches on `ev.kind` —
-  `{ev.kind === 'metric' && <MetricSparkline …/>}`. Add a sibling
+### Step 5 — DONE (Recharts web renderer)
+Web-only, no backend touch — the snapshot already reached the client
+(`EvidenceItem.payload`, `web/src/api.ts:43`).
+- **Render hook:** `web/src/Evidence.tsx` — sibling to the metric sparkline:
   `{ev.kind === 'chart' && <ChartEvidence payload={ev.payload} />}`.
-- **`ChartEvidence`:** read `type` (line|bar|area|scatter), `xColumn`, `yColumns`,
-  `columns`, `rows`; map rows→objects keyed by column name; render the matching
-  Recharts primitive (`LineChart`/`BarChart`/`AreaChart`/`ScatterChart`) in a
-  `ResponsiveContainer`. Small, card-sized, theme colors from the kind palette.
-- **Re-skin `MetricSparkline`** (`Evidence.tsx:225`, currently hand-rolled SVG
-  polyline) onto a Recharts mini `LineChart` — decision 3, one styling surface. Reversal
-  of `graph-redesign.md`'s hand-rolled-SVG direction, made deliberately for the demo.
-- **Where cheap, `TraceMini`** onto Recharts too (decision 3 — "where cheap").
-- **Verify:** pin a chart via `weaver chart --pin`, open `/view?board=…`, confirm the
-  bar/line renders and matches the CLI table numbers.
+- **`ChartEvidence`:** reads `type` (line|bar|area|scatter), `xColumn`, `yColumns`,
+  `columns`, `rows`; maps rows→`{col: value}` records; renders the matching Recharts
+  primitive in a `ResponsiveContainer` (card-sized, 160px). Nothing computed — the
+  rows are the query's. y defaults to every non-x **numeric** column when the agent
+  named none (a column is numeric iff every non-null cell is a number).
+- **Colours:** the dataviz skill's validated categorical palette (blue/aqua/yellow/
+  green/violet/red), validated for CVD on the dark card surface `#232734` (worst
+  adjacent ΔE 10.3 — floor band, mitigated by the always-on legend for ≥2 series;
+  the app's own kind hues FAILED the check — log-gray reads gray). One shared y-axis
+  (never dual), recessive dashed grid, hover tooltip, legend only for ≥2 series
+  (single series → the card title names it). Card border `--k` = series-1 blue
+  (`#3987e5`), new `kind-chart` token in `App.css`.
+- **`MetricSparkline` re-skinned** (`Evidence.tsx`) from the hand-rolled SVG polyline
+  onto a Recharts mini `LineChart` — decision 3, one styling surface. Deliberate
+  reversal of `graph-redesign.md`'s hand-rolled-SVG direction, for the demo.
+- **`TraceMini` NOT re-skinned** — it lives outside the pinned-chart path (search
+  results, different data shape), so "where cheap" (decision 3) didn't apply; left
+  as hand-rolled SVG. Noted so it's a choice, not an oversight.
+- **Verified in-browser** (board `b49432ac`, headless Chrome): a single-series bar
+  (checkout-api p99) and a 2-series line with legend (orders-api p50 vs p99) both
+  render clean — axes, grid, tooltip, legend, no collisions. `tsc` + `vite build`
+  green. The larger JS bundle (Recharts) is the accepted decision-3 dependency cost.
 
 ## Deferred / out of scope (named, not forgotten)
 

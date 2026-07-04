@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, AreaChart, Area,
+  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+} from 'recharts'
 import { api, type Board as BoardData, type EvidenceItem, type MetricPoint, type MetricSeries } from './api'
 import { Icon } from './Icon'
 
@@ -12,6 +16,7 @@ import { Icon } from './Icon'
 const KIND_ICON: Record<string, string> = {
   anomaly: 'warning', log: 'description',
   trace: 'account_tree', metric: 'monitoring', change: 'deployed_code_update',
+  chart: 'bar_chart',
 }
 
 // service-level "find more for this node" buttons — all five legal scopes, each
@@ -104,6 +109,7 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
                     {ev.label && <div className="ev-item-label">{ev.label}</div>}
                     <div className="ev-item-sub mono">{ev.summary}</div>
                     {ev.kind === 'metric' && real && <MetricSparkline service={g.service} metric={ev.aspect} />}
+                    {ev.kind === 'chart' && <ChartEvidence payload={ev.payload} />}
                     {searches.length > 0 && (
                       <div className="ev-item-search" onClick={e => e.stopPropagation()}>
                         {searches.map(s => (
@@ -218,10 +224,77 @@ function loadSeries(service: string): Promise<MetricSeries[]> {
   return p
 }
 
-// hand-rolled SVG polyline (matches TraceMini's no-charting-lib idiom). The svg
-// stretches to fill the card with preserveAspectRatio="none"; non-scaling-stroke
-// keeps the line crisp despite the horizontal stretch. Colour inherits the card's
-// --k (the metric green) via the custom-property cascade.
+// A pinned agent-authored SQL chart (evidence kind `chart`). Renders the snapshot
+// captured at pin time — payload { type, xColumn, yColumns, columns, rows } — in
+// Recharts, the one styling surface all pinned charts share (agent-sql-charts.md
+// decision 3). Nothing is computed here: the rows are the query's, shaped into the
+// {col: value} records Recharts wants. Series colours come from the dataviz palette
+// (validated for CVD on the dark card surface); identity for ≥2 series rides the
+// legend, never colour alone.
+type ChartPayload = {
+  title?: string; type?: string; xColumn?: string | null
+  yColumns?: string[] | null; columns?: string[]; rows?: unknown[][]
+}
+const CHART_SERIES = ['#3987e5', '#199e70', '#c98500', '#008300', '#9085e9', '#e66767']
+
+function ChartEvidence({ payload }: { payload: unknown }) {
+  const p = (payload ?? {}) as ChartPayload
+  const cols = p.columns ?? []
+  const rows = p.rows ?? []
+  if (cols.length === 0 || rows.length === 0) return null
+
+  const type = p.type ?? 'line'
+  const xCol = p.xColumn && cols.includes(p.xColumn) ? p.xColumn : cols[0]
+  // a column is numeric iff every non-null cell is a number — only those can be a
+  // y-series. y defaults to every non-x numeric column when the agent didn't name any.
+  const isNum = (c: string) => {
+    const i = cols.indexOf(c)
+    return rows.some(r => typeof r[i] === 'number') && rows.every(r => r[i] == null || typeof r[i] === 'number')
+  }
+  const named = (p.yColumns ?? []).filter(c => cols.includes(c) && c !== xCol)
+  const yCols = (named.length ? named : cols.filter(c => c !== xCol)).filter(isNum)
+  if (yCols.length === 0) return null
+
+  const data = rows.map(r => { const o: Record<string, unknown> = {}; cols.forEach((c, i) => { o[c] = r[i] }); return o })
+  const axis = 'var(--text-dim)'
+  const color = (i: number) => CHART_SERIES[i % CHART_SERIES.length]
+  // recessive grid + axes; the marks carry the ink (dataviz marks-and-anatomy).
+  const grid = <CartesianGrid stroke="var(--border)" strokeDasharray="2 2" vertical={false} />
+  const xa = <XAxis dataKey={xCol} tick={{ fill: axis, fontSize: 10 }} stroke={axis} tickLine={false} />
+  const ya = <YAxis tick={{ fill: axis, fontSize: 10 }} stroke={axis} tickLine={false} width={40} />
+  const tip = <Tooltip cursor={{ stroke: axis, strokeDasharray: '2 2' }}
+    contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}
+    labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }} />
+  // ≥2 series → a legend names them (secondary encoding for the CVD floor band).
+  const legend = yCols.length >= 2 ? <Legend wrapperStyle={{ fontSize: 11, color: axis }} /> : null
+
+  let chart
+  if (type === 'bar')
+    chart = <BarChart data={data} barGap={2}>{grid}{xa}{ya}{tip}{legend}
+      {yCols.map((c, i) => <Bar key={c} dataKey={c} fill={color(i)} radius={[4, 4, 0, 0]} isAnimationActive={false} />)}</BarChart>
+  else if (type === 'area')
+    chart = <AreaChart data={data}>{grid}{xa}{ya}{tip}{legend}
+      {yCols.map((c, i) => <Area key={c} dataKey={c} stroke={color(i)} strokeWidth={2} fill={color(i)} fillOpacity={0.2} isAnimationActive={false} />)}</AreaChart>
+  else if (type === 'scatter')
+    chart = <ScatterChart>{grid}
+      <XAxis dataKey={xCol} type={isNum(xCol) ? 'number' : 'category'} tick={{ fill: axis, fontSize: 10 }} stroke={axis} tickLine={false} />
+      <YAxis dataKey={yCols[0]} type="number" tick={{ fill: axis, fontSize: 10 }} stroke={axis} tickLine={false} width={40} />{tip}
+      <Scatter data={data} fill={color(0)} isAnimationActive={false} /></ScatterChart>
+  else
+    chart = <LineChart data={data}>{grid}{xa}{ya}{tip}{legend}
+      {yCols.map((c, i) => <Line key={c} dataKey={c} stroke={color(i)} strokeWidth={2} dot={false} isAnimationActive={false} />)}</LineChart>
+
+  return (
+    <div className="ev-chart" role="img" aria-label={`${p.title ?? 'chart'} — ${type} of ${yCols.join(', ')}`}>
+      <ResponsiveContainer width="100%" height={160}>{chart}</ResponsiveContainer>
+    </div>
+  )
+}
+
+// A metric's trajectory as a Recharts mini line — a true sparkline (no axes, grid, or
+// tooltip). Re-skinned from the old hand-rolled SVG polyline onto Recharts so pinned
+// metrics and agent charts share one styling surface (agent-sql-charts.md decision 3).
+// Colour inherits the card's --k (the metric teal) via the custom-property cascade.
 function MetricSparkline({ service, metric }: { service: string; metric: string }) {
   const [points, setPoints] = useState<MetricPoint[] | null>(null)
   useEffect(() => {
@@ -233,22 +306,13 @@ function MetricSparkline({ service, metric }: { service: string; metric: string 
   }, [service, metric])
 
   if (!points || points.length < 2) return null
-  const vals = points.map(p => p.value)
-  const min = Math.min(...vals), max = Math.max(...vals)
-  const span = max - min || 1
-  const W = 240, H = 32, pad = 3
-  const path = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1)) * W
-      const y = pad + (1 - (p.value - min) / span) * (H - 2 * pad)
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
   return (
-    <svg className="ev-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-      role="img" aria-label={`${metric} trajectory`}>
-      <polyline points={path} fill="none" stroke="var(--k)" strokeWidth={1.5}
-        strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div className="ev-spark" role="img" aria-label={`${metric} trajectory`}>
+      <ResponsiveContainer width="100%" height={28}>
+        <LineChart data={points} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
+          <Line dataKey="value" stroke="var(--k)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
