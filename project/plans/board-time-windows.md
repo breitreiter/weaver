@@ -227,41 +227,61 @@ Scope to a normalized time domain and stop worrying about it.
   (highlight the pins inside the selection), never re-execution. Keeps the snapshot
   model intact for everything that isn't a chart.
 
-## Still open
+## Human curation is conversational, not a UI (resolved 2026-07-04)
 
-- **Human authoring.** The one deferred hard problem — a human time gesture integrated
-  across search + evidence drawer + narrative. Not a drop-down. Unpacked below.
+Curation is real and necessary — a human *will* want to say "spans `@t:x` and `@t:y`
+are the same thing, merge them," or "`@t:z` is actually two things — split it into
+startup-weirdness and the later crash." But a **direct-manipulation UI** for that
+(brush-select ranges, drag boundaries, stitch the gesture across search + evidence +
+document) is a swamp — not something that locks in buttery-smooth in two days (the
+"why a UI is hard" record below is the receipts).
 
-## The deferred human-authoring problem (why it's hard, not just unbuilt)
+**The resolution: don't build the swamp. Dump the complicated intent on Claude.** The
+human expresses curation in natural language; Claude executes it against the window
+CRUD surface and narrates. Same move as the charts — the hard authoring work is
+Claude's, the UI is for *selecting and viewing* (the drop-down), not creating. It fits
+the division of labor weaver is built on:
 
-For the demo, Claude authors windows (like charts) and the human curates by selecting
-/ pruning. A real *human* create-a-window affordance is deferred because it isn't one
-missing button — it's genuinely cross-cutting:
+- **The human brings the meaning; Claude brings the timestamps.** "These two are the
+  same thing" / "this is two things, by *startup-weirdness* vs *later-crash*" is exactly
+  the out-of-band judgment Claude can't derive from telemetry. Claude then grounds the
+  mechanical boundary in the data — for the split, it finds *where* startup-weirdness
+  ends and the crash begins (a restart event, a second onset, a gap in errors), instead
+  of making the human eyeball a drag-handle. Conversational curation is **better** than
+  a UI here, not a stopgap.
+- **The operations are window CRUD — no bespoke UI *or* bespoke endpoints.** merge =
+  create(union range) + delete ×2; split = create ×2 + delete ×1; rename / nudge =
+  update. Claude orchestrates create / delete / update-range / update-label. Small,
+  clean surface — the same window API a `weaver window …` verb-set would expose.
+- **Narrate-and-adjudicate replaces direct-manipulation feedback.** Claude narrates the
+  curation on the shared board/doc ("merging `@t:x` + `@t:y` → `@t:onset`; splitting
+  `@t:z` at 09:14 — the restart — into `@t:startup-weirdness` and `@t:later-crash`"); the
+  human vetoes or nudges. That *is* the review loop, and it keeps the restraint
+  discipline (decision 3) intact — Claude mediates, so windows stay few and meaningful.
 
-- **A window needs two things at once that no single control captures: a *range* (two
+Honest caveat: conversational curation is great for *semantic* ops (merge / split /
+rename) and fine for *coarse* boundary moves ("start it at the deploy instead"); only
+*pixel-precise* nudging via prose is slightly clunky — a rare need, not a blocker.
+
+**This closes the last open design question — the note now has zero. What remains is
+build, not decide.**
+
+### Why a direct-manipulation UI would have been hard (kept for the record)
+
+The motivation for routing around it, not a live problem:
+
+- **A window needs two things at once no single control captures: a *range* (two
   timestamps) and a *grounding* (the fact that makes the moment meaningful).** Claude
-  does both in one reasoning step — reads an onset, decides the span, names it, links
-  the evidence. A human clicking has to find the moment, set *both* boundaries, name
-  it, and ideally tie it to a fact — a multi-step gesture with no natural single home.
-- **The three surfaces that each have a claim only hold half of it.** *Search* has the
-  timestamps but no time axis to brush on (it's a list). The *evidence drawer* owns the
-  selected window but not the motivating data. The *document* can cite `@t:` windows but
-  can't define a time range from a text cursor. A good affordance has to stitch one
-  coherent "select a span, name it, ground it" gesture across all three — or crown one
-  as canonical and route the rest to it.
-- **Chicken-and-egg.** The gesture that would make it natural — *brush-select on a
-  shared time axis* — only exists *because* this feature introduces the shared axis. So
-  human-authoring is downstream of the very thing being built.
-- **Restraint doesn't come for free.** Claude keeps windows few and meaningful by
-  judgment (decision 3). A "new window" button invites the 20-junk-windows mess that
-  decision 3 exists to prevent; a human UI would have to actively encourage
-  few-good-windows.
-
-**The likely reframe when it's picked up:** the human's real action is probably
-*curation, not authoring* — rename / delete / nudge-the-boundaries on Claude's seeded
-windows (a light edit) rather than net-new creation from scratch (heavy). That fits
-weaver's human-drives-Claude-multiplies grain and shrinks the UI problem
-considerably. Worth trying that framing before building a full authoring surface.
+  does both in one reasoning step; a human clicking has to find the moment, set both
+  boundaries, name it, and tie it to a fact — a multi-step gesture with no natural home.
+- **Three surfaces each hold only half.** *Search* has the timestamps but no time axis
+  to brush on (it's a list); the *evidence drawer* owns the selected window but not the
+  motivating data; the *document* can cite `@t:` windows but can't define a range from a
+  text cursor.
+- **Chicken-and-egg.** The gesture that'd make it natural — brush-select on a shared
+  time axis — only exists *because* this feature introduces that axis.
+- **Restraint isn't free.** A "new window" button invites the 20-junk-windows mess
+  decision 3 exists to prevent; Claude-mediated curation keeps them few by judgment.
 
 ## Relationship to sibling threads
 
