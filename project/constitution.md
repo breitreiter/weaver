@@ -64,6 +64,41 @@ steerable on demand and explainable in a sentence.
   toolkit a reasoning agent investigates with, never an oracle — is the
   brief's graded deliverable: see `plans/agent-workflow.md`.
 
+## Design stance — decision support first, lean on the model
+
+The north star is **amazing decision support**: weaver exists to make a
+responder's judgment faster and better, not to be a complete tool with
+every knob exposed.
+
+We build on a standing assumption: **there is a smart, tool-using model on
+tap.** That changes the cost structure of a feature. The usual reason to
+cut a powerful capability is that *configuring* it needs a complex UI — a
+**UX swamp dungeon** you can't get locked-in and buttery-smooth in the time
+you have. (We hit exactly this with time-window curation: merging and
+splitting spans *by meaning* is a direct-manipulation nightmare — see
+`plans/board-time-windows.md`.)
+
+So the bias: **when a capability clearly improves decision support and is
+obvious to *use*, but *configuring* it takes advanced wizarding, include it
+anyway and dump the complex configuration on the model.** The human gets the
+simple surface (select, view, ask in prose); Claude does the hard authoring
+in the background and narrates it.
+
+Two guardrails keep this a stance, not a licence to punt every hard UI:
+
+- **AX has to be reasonably good.** AX = agent experience, the model's UX:
+  the model needs a clean, legible contract to drive (the CLI, window CRUD,
+  the read-only SQL sandbox) the same way a human needs good UX. A capability
+  we offload but can't give the model a decent handle on is not shipped.
+- **Prove Claude can hack it.** We demonstrate the model actually solves the
+  configuration problem — authors the chart, splits the window at the right
+  boundary — before we lean on it. Bias-toward-include, not assume-it-works.
+
+The worked examples: the human never builds a chart or drags a window
+boundary; they say what they want, Claude authors it against a small tool
+surface, and the UI stays for selecting, viewing, and pinning. Division of
+labor — the human brings the meaning, the model brings the mechanics.
+
 ## Non-goals
 
 - No auth, users, accounts, or billing.
