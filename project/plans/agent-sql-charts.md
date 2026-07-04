@@ -233,7 +233,16 @@ Web-only, no backend touch — the snapshot already reached the client
 ## Deferred / out of scope (named, not forgotten)
 
 - **Canonical view catalog** — the production hardening for the inaccurate
-  -SQL risk; revisit after real user trials (`demo-vs-production.md`).
+  -SQL risk; revisit after real user trials (`demo-vs-production.md`). **Note:**
+  `board-time-windows.md` may be the forcing function that pulls this forward —
+  making charts re-derivable per selected window (its decision 2/2a) bends the
+  "any SQL at runtime" model toward a windowable **frame contract**, which is a
+  step toward this catalog.
+- **Snapshot-not-live (decision 2) — SUPERSEDED for charts by
+  `board-time-windows.md`.** Charts there re-derive against the board's selected
+  time window (re-run on window *selection*, not on the poll); the pin-time
+  snapshot demotes to a default-window cache. The snapshot rule still holds for
+  every other evidence kind.
 - **Re-run-live charts / refresh-on-poll** — snapshot only for now.
 - **Cross-node "chart wall" as a fourth pane** — charts stay node-tied
   evidence (`chart-wall.md`'s folding decision holds).
