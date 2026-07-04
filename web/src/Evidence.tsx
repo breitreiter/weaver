@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, AreaChart, Area,
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
 import { api, type Board as BoardData, type EvidenceItem, type MetricPoint, type MetricSeries } from './api'
 import { Icon } from './Icon'
@@ -275,12 +275,7 @@ function ChartEvidence({ payload }: { payload: unknown }) {
   else if (type === 'area')
     chart = <AreaChart data={data}>{grid}{xa}{ya}{tip}{legend}
       {yCols.map((c, i) => <Area key={c} dataKey={c} stroke={color(i)} strokeWidth={2} fill={color(i)} fillOpacity={0.2} isAnimationActive={false} />)}</AreaChart>
-  else if (type === 'scatter')
-    chart = <ScatterChart>{grid}
-      <XAxis dataKey={xCol} type={isNum(xCol) ? 'number' : 'category'} tick={{ fill: axis, fontSize: 10 }} stroke={axis} tickLine={false} />
-      <YAxis dataKey={yCols[0]} type="number" tick={{ fill: axis, fontSize: 10 }} stroke={axis} tickLine={false} width={40} />{tip}
-      <Scatter data={data} fill={color(0)} isAnimationActive={false} /></ScatterChart>
-  else
+  else // 'line' (the default) — also the fallback for any legacy/unknown type (e.g. a retired scatter snapshot)
     chart = <LineChart data={data}>{grid}{xa}{ya}{tip}{legend}
       {yCols.map((c, i) => <Line key={c} dataKey={c} stroke={color(i)} strokeWidth={2} dot={false} isAnimationActive={false} />)}</LineChart>
 

@@ -77,8 +77,10 @@ Charting decisions (locked — `board-time-windows.md` §2a/2b):
 
 Follow-ups:
 
-- [ ] **Retire the shipped `scatter` (+ categorical bar) render types** to match the
-      time-x-only decision. (Currently `weaver chart --type` still accepts them.)
+- [x] **Retired `scatter`** to match the time-x-only decision — dropped from the API
+      type guard (`line|bar|area` only), the CLI help, and the web renderer (legacy
+      scatter snapshots fall through to the line renderer). `bar` is now framed as
+      count-bar (counts per time bucket); hard time-x enforcement arrives with windows.
 - [ ] **Board time windows** — a tracked set of named `t:` windows; charts lock to
       the selected one (re-derive via the Grafana `$__timeFilter`/`$__timeGroup`
       idiom); the window is the shared time domain that unlocks synchronized hover.

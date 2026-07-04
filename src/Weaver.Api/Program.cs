@@ -568,8 +568,10 @@ app.MapPost("/api/charts/exec", (ChartExecReq req) =>
     if (string.IsNullOrWhiteSpace(req.Sql))
         return Results.BadRequest(new { error = "sql is required" });
 
-    if (req.Type is { } ty && ty is not ("line" or "bar" or "area" or "scatter"))
-        return Results.BadRequest(new { error = $"unknown chart type '{ty}' (line|bar|area|scatter)" });
+    // canonical time-x render set: line + count-bar (area = a line fill). scatter is
+    // retired (numeric×numeric has no time axis) — see board-time-windows.md §2b.
+    if (req.Type is { } ty && ty is not ("line" or "bar" or "area"))
+        return Results.BadRequest(new { error = $"unknown chart type '{ty}' (line|bar|area)" });
 
     var timeoutMs = Math.Clamp(req.TimeoutMs ?? SqlSandbox.DefaultTimeoutMs, 100, SqlSandbox.DefaultTimeoutMs);
     var maxRows = Math.Clamp(req.MaxRows ?? SqlSandbox.DefaultMaxRows, 1, SqlSandbox.DefaultMaxRows);

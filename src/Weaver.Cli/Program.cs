@@ -85,10 +85,10 @@ void Help()
           board show [id|url]           print the board (pinned services + evidence)
           pin <id|service>              pin a search result by its typed id, OR a
               [--as K --aspect A]         service + manual evidence (--note/--evidence/--at)
-          chart --sql "q" --title "t"   author a chart from raw SQL (read-only sandbox):
-              [--type line|bar|area|scatter]  prints the rows as a table + a ch: id;
-              [--x col] [--y a,b]         --pin <service> snapshots it to the board.
-              [--pin <service>]           the visual render is web-only.
+          chart --sql "q" --title "t"   author a time-series chart from raw SQL:
+              [--type line|bar|area]      x is time; bar = counts per bucket. prints
+              [--x col] [--y a,b]         the rows as a table + a ch: id; --pin
+              [--pin <service>]           snapshots it. visual render is web-only.
           unpin <evidence-id>           drop one finding
           unpin <service> --all         remove a service and its evidence
           doc show [id|url]             print the co-edited document (+ version)
