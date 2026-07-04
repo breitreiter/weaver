@@ -5,59 +5,83 @@ principles everything else hangs off of. Kept short on purpose.
 
 ## Purpose
 
-weaver helps SREs troubleshoot incidents in complex microservice
-architectures by turning the service dependency graph into something
-*legible*. Services are nodes, connections are edges — and weaver's
-real job is to **cleave that graph into "interesting" regions that
-tell a story** about where an incident lives and how it propagates.
+weaver helps a responder investigate an incident in a complex
+microservice system from **observed telemetry** — and turns the
+investigation into something *legible and defensible*.
 
-A raw dependency graph of a real system is a hairball; staring at it
-tells you nothing. The thesis of weaver is that the value isn't the
-graph — it's the *partitioning*: a principled way to surface the
-subgraph that matters right now.
+Stored data is pure observation (OTel-shaped: services, deps, metrics,
+logs, traces, change events). Everything interpretive — anomalies,
+timelines, blast radius — is **computed live** from that raw data,
+never stored. weaver hands you facts; the judgment stays the human's.
 
-> The narrative angle / "gripping purchase" — what specific story the
-> partitioning tells, and the scenario we demo it on — is still open.
-> See Open Questions.
+The synthesis surface is a **co-edited document**, addressed by a board
+id, that the responder and Claude write together — a live RCA while it
+burns, a post-incident review once it's out, a design note when nothing's
+on fire. weaver's thesis: the value isn't a verdict the tool emits — it's
+the **argued, grounded write-up** the human and model reach together, every
+claim anchored to a pinned fact.
+
+> weaver is a **toolkit over a mystery, not an oracle.** The data holds a
+> real, solvable situation, but there is no stored "status" or answer
+> label; health is *derived*, never recorded. The conclusion is *written*,
+> in prose, in the document — never emitted as a score or a root cause.
 
 ## Users
 
 Abstractly: teams of SREs during incident response.
 
-In practice the single audience that matters is **one operator
-driving it live and reasoning out loud** — so every feature must be
-steerable on demand and explainable in a sentence.
+In practice the single audience that matters is **one operator driving
+it live and reasoning out loud, with Claude as co-author** — so every
+feature must be steerable on demand, explainable in a sentence, and usable
+by a tired responder who wants the legwork done so their scarce attention
+goes to judgment.
 
 ## Core capabilities
 
-- Visualize a service dependency graph (nodes = services, edges =
-  connections).
-- Partition the graph into coherent, "interesting" regions rather
-  than showing the whole hairball at once.
-- Let the operator steer: focus a region, expand/collapse, follow a
-  propagation path.
-- Back the partitioning with logic the operator can explain and
-  defend, not a black box.
+Three movements, shared by the CLI and the web UI so they always agree:
+
+- **Forage** — find things: search (anomalies / traces / logs / services /
+  metrics / changes), facets, a service's signals, a trace's spans, the
+  evidence dossier for a node. Every result carries a **typed id** you can
+  pin.
+- **Correlate** — relate things, as *enumerations, never a verdict*: what
+  moved vs. a base window (anomalies), onset ordering (timeline), who depends
+  on a node (blast-radius), the concrete facts between two services
+  (relationships). These *ground* a claim; they never crown a cause.
+- **Write it up** — pins + the **co-edited document**. Pin a finding by its
+  typed id, then cite it in the prose by that same id
+  (`@an:checkout:latency_p99`) so every claim points back at the fact that
+  grounds it. The human and Claude edit the same document at once.
+
+Everything interpretive is computed live from raw observation; nothing is a
+stored verdict, score, or "root cause."
 
 ## Stack
 
-- **Backend:** .NET — owns the graph model and partitioning logic.
-- **Frontend:** React — single-screen interactive graph view.
-- One screen. No backend services beyond what this view needs.
+- **Backend:** .NET (`Api`, `Cli`, `Core`, `Contracts`) — owns the read-only
+  telemetry store, the live analysis primitives (anomalies / timeline /
+  blast-radius, computed at query time), and the writable board + document
+  store.
+- **Frontend:** React — the investigation surface: a forage (search) panel,
+  the board of pinned evidence, and the co-edited document.
+- **Agent surface:** a CLI on PATH — the model-agnostic contract to the same
+  primitives that back the UI.
+- One board at a time. No backend services beyond what this needs.
 
 ## Interface principles
 
 - **Coordination is plain URLs.** The contract between the agent (CLI /
-  coding agent) and the React UI is a URL — nothing fancier. Every
-  shareable artifact (a curated View) *is* a URL: clickable from the
-  console, pastable into Slack, storable in a ticket. Durable by design
-  (a stable View id), so a link in a ticket still resolves later.
-- **Pixels are earned.** The UI **never** renders the full graph, and
-  **never** uses a force-directed layout — not even ironically. A view
-  exists only once a filter has narrowed the system to something
-  *meaningful*; rendering follows from selection, never the reverse.
-  This is why the filter/selection layer (the "power-tool") is core, not
-  a convenience — see `plans/data-model.md`.
+  coding agent) and the React UI is a URL — nothing fancier. The
+  investigation lives in a document addressed by a **board id**
+  (`/view?board=…`): clickable from the console, pastable into Slack,
+  storable in a ticket. Durable by design (a stable board id), so a link
+  still resolves later.
+- **Rendering follows meaning; pixels are earned.** What's shown is what's
+  been *selected* — pinned evidence, a node's signals, an agent-authored
+  chart — density earned by relevance, never decoration. weaver never
+  renders the system as a hairball and **never** uses a force-directed
+  layout, not even ironically. (The graph-as-centerpiece was retired in the
+  document pivot; the anti-hairball stance stays as a durable rule.)
 - **The agent surface is a CLI over bash.** Any bash-capable coding agent
   drives weaver (we demo on Claude Code); the CLI is a model-agnostic
   contract, not an MCP/bespoke integration. The full stance — weaver as a
@@ -99,16 +123,30 @@ boundary; they say what they want, Claude authors it against a small tool
 surface, and the UI stays for selecting, viewing, and pinning. Division of
 labor — the human brings the meaning, the model brings the mechanics.
 
+## The line we hold
+
+The stance above leans hard on the model; this is its counterweight. Claude
+is a full co-author — it forages, pins, drafts a leading read, argues both
+sides — but it does **not** unilaterally declare the root cause and does
+**not** ship the fix. The human owns *when the analysis is done and what it
+says*, and the decisive call (roll back, shed load, page a team) is theirs.
+This isn't a limitation to apologize around; it's the design. The tie-break
+is frequently out-of-band — what a deploy *meant*, whether a sale was
+running — truth the telemetry never held, and a model that "concludes" from
+data alone will confidently pick the plausible coincidence over the real
+cause. See `plans/agent-role.md`.
+
 ## Non-goals
 
 - No auth, users, accounts, or billing.
-- No screens beyond the single graph view.
-- Not a general-purpose observability platform — weaver is one sharp
-  idea, demonstrated well.
-- No breadth-for-breadth's-sake features.
-- No force-directed graph layouts. No rendering of the full graph / the
-  hairball, under any circumstance — not as an anti-pattern, not as a
-  joke. See Interface principles.
+- **No stored verdicts.** weaver never records health, a score, or a root
+  cause; interpretation is computed live and the conclusion is written by
+  hand in the document.
+- **No graph hairball, ever.** No force-directed layouts, no rendering the
+  full system as a node-link diagram — not as an anti-pattern, not as a joke.
+  See Interface principles.
+- Not a general-purpose observability platform — weaver is one sharp idea,
+  demonstrated well. No breadth-for-breadth's-sake features.
 
 Scaling choices we deliberately *don't* make for the demo (SQLite over
 ClickHouse, a selector grammar over a search engine, no embeddings) — and
@@ -118,11 +156,10 @@ the big hammer is part of the point.
 
 ## Open questions
 
-- **The narrative angle.** What makes a region "interesting"? What
-  incident story does the partition tell, and on what example data do
-  we demo it? This is the crux and is being worked out next.
-- What graph-partitioning approach earns its keep here (community
-  detection, blast-radius from a failing node, latency/error-weighted
-  cuts, …) and why.
-- Where the demo's example graph comes from (synthetic vs. a known
-  reference topology).
+The graph-era questions this section once held — what makes a region
+"interesting," which partitioning approach earns its keep, where the example
+graph comes from — are **retired**: the graph centerpiece was replaced by the
+co-edited document, and the demo scenario (a flash-sale incident on synthetic
+OTel telemetry) is settled. Live design work now lives in `plans/` (house
+style, board time windows, the demo script) and the working list in
+`TODO.md`; this document holds only what's *foundational*, not the backlog.
