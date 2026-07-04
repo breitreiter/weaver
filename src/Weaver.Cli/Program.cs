@@ -83,6 +83,7 @@ void Help()
         write it up (the board — pins + the co-edited document)
           board new [title]             start a board; prints its id + URL
           board show [id|url]           print the board (pinned services + evidence)
+          board delete <id|url>         delete a board + all its pins (irreversible)
           pin <id|service>              pin a search result by its typed id, OR a
               [--as K --aspect A]         service + manual evidence (--note/--evidence/--at)
           chart --sql "q" --title "t"   author a time-series chart from raw SQL:
@@ -442,6 +443,23 @@ void Board()
         Console.WriteLine($"board {c.Id} created");
         Console.WriteLine($"open: {web}{c.Url}");
         Console.WriteLine($"tip:  export WEAVER_BOARD={c.Id}   (so pin/doc target it)");
+        return;
+    }
+
+    if (sub is "delete" or "rm")
+    {
+        // Deleting a board (document + all pins + evidence) is irreversible and
+        // unprompted, so require an EXPLICIT id — never fall back to $WEAVER_BOARD
+        // and nuke the board you happen to be working. A pasted /view?board= URL works.
+        var target = argv.Pos.Count > 1 ? argv.Pos[1] : argv.Opt("board");
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            Console.Error.WriteLine("weaver: board delete needs an explicit <id> (it won't use $WEAVER_BOARD).");
+            Environment.Exit(2);
+        }
+        var did = BoardId(target!);
+        api.Delete($"/api/boards/{did}");
+        Console.WriteLine($"board {did} deleted (document, pins, and evidence)");
         return;
     }
 
