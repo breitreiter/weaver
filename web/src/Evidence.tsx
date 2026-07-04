@@ -310,7 +310,16 @@ function MetricSparkline({ service, metric }: { service: string; metric: string 
     <div className="ev-spark" role="img" aria-label={`${metric} trajectory`}>
       <ResponsiveContainer width="100%" height={28}>
         <LineChart data={points} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
-          <Line dataKey="value" stroke="var(--k)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+          {/* hidden axis so the tooltip labels each point by its time (UTC, matching
+              the app) rather than by row index — the sparkline itself stays bare. */}
+          <XAxis dataKey="ts" hide />
+          <Tooltip cursor={{ stroke: 'var(--text-dim)', strokeDasharray: '2 2' }}
+            contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, padding: '2px 6px' }}
+            labelStyle={{ color: 'var(--text-dim)' }} itemStyle={{ color: 'var(--text)' }}
+            labelFormatter={(ts: string) => ts.slice(11, 16)}
+            formatter={(v: number) => [Number.isInteger(v) ? v : v.toFixed(1), metric]} />
+          <Line dataKey="value" stroke="var(--k)" strokeWidth={1.5} dot={false}
+            activeDot={{ r: 3, fill: 'var(--k)', stroke: 'none' }} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
