@@ -129,9 +129,10 @@ Grouped by phase; the implemented verb surface (see `cli-co-researcher.md`).
 |---|---|---|
 | what can I filter by | `facets` | the vocabulary: subsystems/kinds/levels/routes/… |
 | orient | `graph` | topology: services, deps, routes |
-| query anything | `search <scope> [facets]` | typed, pinnable rows (anomalies\|traces\|logs\|services\|metrics\|changes), each with its id |
-| characterize one thing | `service <id>` / `evidence <id>` | deps + a `shape_code` per signal; the node dossier |
+| query anything | `search <scope> [facets]` | typed, pinnable rows (anomalies\|traces\|logs\|services\|metrics\|changes\|knowledge), each with its id |
+| characterize one thing | `service <id>` / `evidence <id>` | deps + a `shape_code` per signal; the node dossier (incl. knowledge) |
 | qualitative tell | `logs <id> --level error` / `trace <id>` | specific-vs-generic logs; where `self_ms` accrues |
+| read a factoid | `snippet <kn:id>` | one knowledge snippet in full + prev/next chunk if it's part of a doc |
 
 **Correlate (enumerations, never verdicts)**
 | intent | verb | returns |

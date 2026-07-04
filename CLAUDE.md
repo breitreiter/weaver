@@ -30,7 +30,8 @@ Run bare `weaver` for the full help. The verbs group into three movements:
 
 **1. forage** — find things. Same lens as the UI's left panel.
 - `search <scope> [facets]` — the unified query. Scopes: `anomalies | traces |
-  logs | services | metrics | changes`. Every row prints a **typed id** you can pin.
+  logs | services | metrics | changes | knowledge`. Every row prints a **typed
+  id** you can pin.
 - `facets` — what subsystems / levels / routes / teams / templates exist (the
   vocabulary of *this* dataset; run it first when you don't know the terrain).
 - `service <id>` — one service: its deps and a per-signal shape summary.
@@ -38,7 +39,19 @@ Run bare `weaver` for the full help. The verbs group into three movements:
 - `logs [<id>] [--grep q]` — log lines, full-text via `--grep`.
 - `traces [--route r]` / `trace <id>` — sampled request traces (slowest first);
   one trace broken into spans + where self-time went.
-- `evidence <service>` — the node dossier: signals, logs, changes in one view.
+- `evidence <service>` — the node dossier: signals, logs, changes, **knowledge**
+  in one view.
+- `snippet <kn:id>` — read one knowledge snippet in full (search rows truncate);
+  when it's part of a document, prints the prev/next chunk to keep reading.
+
+**Knowledge snippets** (`search knowledge`) are a blended bag of authored
+factoids — docs, runbooks, prior incidents, prior board text — each attached to
+one service and **timeless** (no timestamp, so the window filters skip them).
+They're observed *artifacts*, not verdicts: recorded out-of-band context (a
+pool-sizing rationale, a rhyming past post-mortem) the telemetry never held. FTS
+over title+body; facet by `--source doc|runbook|incident|board`. The *live*
+tie-break ("was a sale running right now?") stays out-of-band by design — see
+`project/plans/knowledge-snippets.md`.
 
 **2. correlate** — relate things. Enumerations, never a verdict.
 - `anomalies [--split t] [--z n]` — what moved vs. the base window.
@@ -67,7 +80,8 @@ filters (`--grep --subsystem --kind --team --level --route --metric …`), and
 
 Anchor every shared reference on an **id**, never a screen position. Services go by
 id (`storefront-bff`); findings by their typed id (e.g. `an:<service>:<metric>` for
-an anomaly row, `tr:<id>` for a trace). A pinned finding keeps that **same typed id
+an anomaly row, `tr:<id>` for a trace, `kn:<id>` for a knowledge snippet). A
+pinned finding keeps that **same typed id
 across every surface** — it's how you `@`-reference it in the document
 (`@an:checkout:latency_p99`), and it's what `board show` prints next to each pin. So
 every claim in the prose can point back at the fact that grounds it. When the user

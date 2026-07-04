@@ -303,14 +303,15 @@ app.MapGet("/api/search/facets", (WeaverDbContext db) => new FacetsDto(
     db.Logs.Select(l => l.TemplateId).Distinct().OrderBy(x => x).ToList(),
     db.RequestTypes.Select(r => r.Id).OrderBy(x => x).ToList(),
     db.Traces.Select(t => t.Status).Distinct().OrderBy(x => x).ToList(),
-    ChangeKinds(db)));
+    ChangeKinds(db),
+    KnowledgeSources(db)));
 
 // --- search: structured query -> typed results -----------------------------
 app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
     string? subsystem, string? kind, string? team,
     string? level, string? template, string? route, string? status, int? minMs,
     string? metric, string? from, string? to, string? split, double? z, double? minPct, int? limit,
-    string? service, string? trace) =>
+    string? service, string? trace, string? source) =>
 {
     var lim = limit ?? 50;
     scope ??= "services";
@@ -410,8 +411,15 @@ app.MapGet("/api/search", (WeaverDbContext db, string? scope, string? q,
                 .Where(c => service is null || c.TargetId == service).Take(lim).ToList();
             return Results.Ok(rows.Select(ChangeResult).ToList());
         }
+        case "knowledge":
+        {
+            // timeless: --from/--to are intentionally ignored here (a doc has no
+            // point on the telemetry window). `q` runs FTS over title+body.
+            var rows = KnowledgeQuery(db, q, service, source, svc, lim);
+            return Results.Ok(rows.Select(k => KnowledgeResult(ToKnowledgeDto(k))).ToList());
+        }
         default:
-            return Results.BadRequest(new { error = $"unknown scope '{scope}' (services|anomalies|logs|traces|metrics|changes)" });
+            return Results.BadRequest(new { error = $"unknown scope '{scope}' (services|anomalies|logs|traces|metrics|changes|knowledge)" });
     }
 });
 
@@ -440,6 +448,9 @@ app.MapGet("/api/search/resolve", (WeaverDbContext db, string id) =>
         case "ce":
             return ChangeEvents(db, null, null, null).FirstOrDefault(x => x.Id == rest) is { } ce
                 ? Results.Ok(ChangeResult(ce)) : NotFound(id);
+        case "kn":
+            return KnowledgeById(db, rest) is { } kn
+                ? Results.Ok(KnowledgeResult(ToKnowledgeDto(kn))) : NotFound(id);
         case "an":
         case "me":
         {
@@ -464,10 +475,32 @@ app.MapGet("/api/search/resolve", (WeaverDbContext db, string id) =>
             return Results.BadRequest(new { error =
                 "a chart is authored, not resolved — create it with `weaver chart --sql … --title … --pin <service>`" });
         default:
-            return Results.BadRequest(new { error = $"unknown id prefix '{prefix}' (svc|log|tr|ce|an|me|ch)" });
+            return Results.BadRequest(new { error = $"unknown id prefix '{prefix}' (svc|log|tr|ce|kn|an|me|ch)" });
     }
 
     static IResult NotFound(string id) => Results.NotFound(new { error = $"no result for id '{id}'" });
+});
+
+// --- knowledge snippet drill-in (full body + keep-reading affordance) -------
+// Search rows truncate and a body is paragraphs; this returns the whole snippet
+// plus its position in the parent doc and the prev/next chunk ids (all null for
+// a loose factoid), so the reader can walk a document chunk by chunk.
+app.MapGet("/api/knowledge/{id}", (WeaverDbContext db, string id) =>
+{
+    if (KnowledgeById(db, id) is not { } k)
+        return Results.NotFound(new { error = $"unknown knowledge snippet '{id}'" });
+
+    int? total = null; string? prev = null, next = null;
+    if (k.DocRef is { } doc)
+    {
+        var chain = db.Knowledge.Where(x => x.DocRef == doc).ToList()
+            .OrderBy(x => x.Seq ?? 0).ThenBy(x => x.Id).ToList();
+        total = chain.Count;
+        var i = chain.FindIndex(x => x.Id == k.Id);
+        if (i > 0) prev = "kn:" + chain[i - 1].Id;
+        if (i >= 0 && i < chain.Count - 1) next = "kn:" + chain[i + 1].Id;
+    }
+    return Results.Ok(new KnowledgeDetailDto(ToKnowledgeDto(k), total, prev, next));
 });
 
 // --- search: volume histogram (honest counts over the FULL matching set) ----
@@ -637,7 +670,14 @@ app.MapGet("/api/nodes/{id}/evidence", (WeaverDbContext db, string id, string? f
     var changes = ChangeEvents(db, f, t, id);
     var traceCount = db.Spans.Where(sp => sp.ServiceId == id).Select(sp => sp.TraceId).Distinct().Count();
 
-    return Results.Ok(new NodeEvidenceDto(ToServiceDto(s), new WindowDto(f, t), signals, logGroups, changes, traceCount));
+    // knowledge is timeless — NOT filtered by the window (precedent: the trace
+    // count above also ignores it). All snippets attached to this service.
+    var knowledge = KnowledgeQuery(db, null, id, null, null, 100)
+        .Select(k => new NodeKnowledgeDto("kn:" + k.Id, k.Source, k.SourceRef, k.Title,
+            k.Body.Length > 120 ? k.Body[..120].TrimEnd() + "…" : k.Body))
+        .ToList();
+
+    return Results.Ok(new NodeEvidenceDto(ToServiceDto(s), new WindowDto(f, t), signals, logGroups, changes, traceCount, knowledge));
 });
 
 app.Run();
@@ -741,6 +781,11 @@ static string EvidenceSummary(string kind, JsonElement p)
         }
         case "change":
             return S(p, "summary") != "" ? S(p, "summary") : S(p, "kind");
+        case "knowledge":
+        {
+            var cite = S(p, "sourceRef") != "" ? S(p, "sourceRef") : S(p, "source");
+            return Join(" · ", cite, S(p, "title"));
+        }
         case "metric":
             return Join(" · ", S(p, "shapeCode"), S(p, "prose"));
         case "chart":
@@ -776,6 +821,23 @@ static SearchResultDto ChangeResult(ChangeEventDto c) =>
     new("change", "ce:" + c.Id, c.Summary,
         $"{c.Kind} · {c.Ts}" + (c.TargetId is not null ? " · " + c.TargetId : " · fleet-wide"), c,
         new PinTargetDto(c.TargetId is not null ? [c.TargetId] : [], new EvidenceRefDto("change", c.Kind, c.Ts, c, RefId: "ce:" + c.Id)));
+
+// A knowledge snippet as a pinnable result. Timeless → the evidence At is null
+// (the card renders without a time chip). Aspect prefers the citation ref, so a
+// pin from INC-2411 reads as its source. Pin dedup key stays (svc, kind, aspect,
+// at) as for every other kind.
+static SearchResultDto KnowledgeResult(KnowledgeSnippetDto k)
+{
+    var cite = k.SourceRef is { } r ? $"{k.Source} · {r}" : k.Source;
+    var part = k.DocRef is not null && k.Seq is { } s ? $" · part {s}" : "";
+    var excerpt = k.Body.Length > 140 ? k.Body[..140].TrimEnd() + "…" : k.Body;
+    return new SearchResultDto(
+        "knowledge", "kn:" + k.Id, k.Title, $"{cite} · {k.ServiceId}{part}",
+        new { k.Source, k.SourceRef, k.ServiceId, k.DocRef, k.Seq, k.Title, k.Body, excerpt },
+        new PinTargetDto([k.ServiceId],
+            new EvidenceRefDto("knowledge", k.SourceRef ?? k.Source, null,
+                new { k.Source, k.SourceRef, k.Title, k.Body, k.DocRef, k.Seq }, RefId: "kn:" + k.Id)));
+}
 
 static SearchResultDto AnomalyResult(AnomalyDto a) =>
     new("anomaly", $"an:{a.SubjectId}:{a.Metric}",
@@ -869,6 +931,47 @@ static List<ChangeEventDto> ChangeEvents(WeaverDbContext db, string? from, strin
 static List<string> ChangeKinds(WeaverDbContext db)
 {
     try { return db.ChangeEvents.Select(c => c.Kind).Distinct().OrderBy(x => x).ToList(); }
+    catch (Microsoft.Data.Sqlite.SqliteException) { return []; }
+}
+
+// knowledge_snippets may be absent from older generated dbs — guard like changes.
+static List<string> KnowledgeSources(WeaverDbContext db)
+{
+    try { return db.Knowledge.Select(k => k.Source).Distinct().OrderBy(x => x).ToList(); }
+    catch (Microsoft.Data.Sqlite.SqliteException) { return []; }
+}
+
+static KnowledgeSnippetDto ToKnowledgeDto(KnowledgeSnippetEntity k) =>
+    new(k.Id, k.ServiceId, k.Source, k.SourceRef, k.Title, k.Body, k.DocRef, k.Seq);
+
+static KnowledgeSnippetEntity? KnowledgeById(WeaverDbContext db, string id)
+{
+    try { return db.Knowledge.FirstOrDefault(k => k.Id == id); }
+    catch (Microsoft.Data.Sqlite.SqliteException) { return null; }
+}
+
+// Query knowledge snippets (guarded). Free text runs FTS over title+body; the
+// service filter + subsystem/kind/team set narrow by the attached service. No
+// time window — snippets are timeless. Ordering is neutral (service, then the
+// doc chain, then title) — never relevance-to-the-incident.
+static List<KnowledgeSnippetEntity> KnowledgeQuery(
+    WeaverDbContext db, string? q, string? service, string? source, HashSet<string>? svc, int lim)
+{
+    try
+    {
+        var fts = FtsQuery(q);
+        IQueryable<KnowledgeSnippetEntity> kq = fts is null
+            ? db.Knowledge
+            : db.Knowledge.FromSqlInterpolated($@"
+                SELECT k.* FROM knowledge_snippets k
+                JOIN knowledge_snippets_fts f ON k.rowid = f.rowid
+                WHERE knowledge_snippets_fts MATCH {fts}");
+        if (service is not null) kq = kq.Where(k => k.ServiceId == service);
+        if (source is not null) kq = kq.Where(k => k.Source == source);
+        var rows = kq.ToList().Where(k => svc is null || svc.Contains(k.ServiceId));
+        return rows.OrderBy(k => k.ServiceId).ThenBy(k => k.DocRef ?? "").ThenBy(k => k.Seq ?? 0)
+            .ThenBy(k => k.Title).Take(lim).ToList();
+    }
     catch (Microsoft.Data.Sqlite.SqliteException) { return []; }
 }
 

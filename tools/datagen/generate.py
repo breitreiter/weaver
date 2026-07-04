@@ -166,6 +166,16 @@ def build_schema(con: sqlite3.Connection) -> None:
             edge_id TEXT REFERENCES dependencies(id), kind TEXT NOT NULL,
             start_offset_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL,
             self_ms INTEGER NOT NULL, status TEXT NOT NULL, attributes TEXT NOT NULL );
+
+        -- knowledge snippets: a blended bag of factoids (docs / runbooks / prior
+        -- incidents / prior board text). Observed ARTIFACTS, not derived judgments.
+        -- Each attaches to one service (scaffolds into evidence); no timestamp (they
+        -- sit outside the telemetry window). doc_ref/seq chain chunks of one document.
+        -- See project/plans/knowledge-snippets.md.
+        CREATE TABLE knowledge_snippets (
+            id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id),
+            source TEXT NOT NULL, source_ref TEXT, title TEXT NOT NULL, body TEXT NOT NULL,
+            doc_ref TEXT, seq INTEGER );
         """
     )
 
@@ -179,10 +189,19 @@ def build_indexes(con: sqlite3.Connection) -> None:
         CREATE INDEX ix_span_trace     ON spans(trace_id);
         CREATE INDEX ix_trace_route    ON traces(request_type_id, status);
 
+        CREATE INDEX ix_knowledge_svc ON knowledge_snippets(service_id);
+
         CREATE VIRTUAL TABLE log_events_fts USING fts5(
             message, fields, content='log_events', content_rowid='rowid' );
         INSERT INTO log_events_fts(rowid, message, fields)
             SELECT rowid, message, fields FROM log_events;
+
+        -- knowledge FTS over the situating title + body (same pattern as logs). A
+        -- well-titled chunk is a contextually-enriched chunk (search-api §knowledge).
+        CREATE VIRTUAL TABLE knowledge_snippets_fts USING fts5(
+            title, body, content='knowledge_snippets', content_rowid='rowid' );
+        INSERT INTO knowledge_snippets_fts(rowid, title, body)
+            SELECT rowid, title, body FROM knowledge_snippets;
         """
     )
 
@@ -415,6 +434,10 @@ def generate(topology: dict, seed: int, out_path: Path, traces_per_min: int) -> 
     con.executemany("INSERT INTO traces VALUES (?,?,?,?,?,?)", trace_rows)
     con.executemany("INSERT INTO spans VALUES (?,?,?,?,?,?,?,?,?,?,?)", span_rows)
 
+    # --- knowledge snippets (authored verbatim in the spec, copied as-is) --
+    know_rows = _knowledge_rows(topology.get("knowledge", []))
+    con.executemany("INSERT INTO knowledge_snippets VALUES (?,?,?,?,?,?,?,?)", know_rows)
+
     build_indexes(con)
     con.commit()
     last = max(r[2] for r in metric_rows)
@@ -423,6 +446,7 @@ def generate(topology: dict, seed: int, out_path: Path, traces_per_min: int) -> 
         "services": len(services), "dependencies": len(deps), "request_types": len(routes),
         "metric_samples": len(metric_rows) + len(edge_rows), "log_events": len(log_rows),
         "change_events": len(change_rows), "traces": len(trace_rows), "spans": len(span_rows),
+        "knowledge_snippets": len(know_rows),
         "window": f"{iso(start)} .. {last}",
     }
     con.close()
@@ -514,6 +538,31 @@ def _gen_changes(start, inc: Incident):
         rows.append(("chg-deploy-payments", iso(ts), "deploy", d["target"], d["summary"],
                      json.dumps(d.get("fields", {}))))
     rows.sort(key=lambda r: r[1])
+    return rows
+
+
+def _knowledge_rows(snippets: list) -> list:
+    """Copy authored knowledge snippets from the spec to insertable tuples.
+
+    No generation, no drawing from distributions — the prose is authored (by
+    hand for load-bearing chunks, model-drafted for filler) and frozen in the
+    spec. We only shape it and default the optional columns. `seq` defaults to
+    the list position within a doc_ref group so a doc's chunks keep their order
+    even if the author omits explicit seq. See knowledge-snippets.md.
+    """
+    rows = []
+    doc_counter: dict[str, int] = {}
+    for k in snippets:
+        doc_ref = k.get("doc_ref")
+        if k.get("seq") is not None:
+            seq = int(k["seq"])
+        elif doc_ref is not None:
+            seq = doc_counter.get(doc_ref, 0) + 1
+            doc_counter[doc_ref] = seq
+        else:
+            seq = None
+        rows.append((k["id"], k["service_id"], k["source"], k.get("source_ref"),
+                     k["title"], k["body"], doc_ref, seq))
     return rows
 
 

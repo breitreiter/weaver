@@ -99,13 +99,25 @@ is authoring discipline (no answer labels; decoys, staleness, and the odd
 context-poor chunk are the texture). Plan:
 `project/plans/knowledge-snippets.md`.
 
-- [ ] datagen: `knowledge_snippets` table + FTS5 + scenario-spec passthrough;
-      author the flash-sale snippet set.
-- [ ] Core/Contracts/API: entity + guards, DTO, `knowledge` scope, resolve,
+- [x] datagen: `knowledge_snippets` table + FTS5 + scenario-spec passthrough.
+      **Built 2026-07-04** (branch `knowledge-snippets`). Starter snippet set laid
+      into `topology-flashsale.yaml` — deliberately small + mostly-boring, one
+      clean demo-beat snippet (pool-sizing rationale). ⚠ The full load-bearing +
+      decoy authoring is a flagged follow-up (see below).
+- [x] Core/Contracts/API: entity + guards, DTO, `knowledge` scope, resolve,
       facets, result builder (`kn:` id, evidence kind `knowledge`, `At = null`).
-- [ ] Dossier + CLI: `NodeEvidenceDto.knowledge` (un-windowed) + `evidence`
-      section + a read-full drill-in verb.
-- [ ] Web: scope + result card + `knowledge` evidence-kind card.
+- [x] Dossier + CLI: `NodeEvidenceDto.knowledge` (un-windowed) + `evidence`
+      section + `weaver snippet <kn:id>` drill-in with keep-reading affordance.
+- [x] Web: `knowledge` scope + `--source` facet + result card + `knowledge`
+      evidence-kind card.
+- [ ] **Author the real flash-sale snippet set** — the two-tier authoring
+      (hand-authored load-bearing/decoy coupled to `project/private/
+      ground-truth-flash-sale.md`; per-team voice via model-drafted filler). The
+      out-of-band "was a sale running?" fact MUST stay out of the bag — putting it
+      in searchable knowledge would collapse the demand-vs-deploy ambiguity. Do
+      with Joseph; it's puzzle-design, not plumbing.
+- [ ] End-to-end verify against a restarted API + regenerated db (Joseph runs the
+      servers) — CLI `search knowledge` / `snippet` / `evidence`, web scope + pin.
 
 ## CLI ↔ UI alignment (the co-researcher lift)
 
