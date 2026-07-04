@@ -273,6 +273,21 @@ app.MapDelete("/api/boards/{id}/nodes/{serviceId}", (BoardsDbContext db, string 
     return Results.Ok(new { ok = true });
 });
 
+// Delete a whole board — the document, every pinned node, and all its evidence.
+// No FK cascade is configured (same as the node delete), so each table is cleared
+// explicitly. The legacy BoardEdges table (the retired graph model) isn't EF-managed
+// and current boards carry no edges, so it's left alone.
+app.MapDelete("/api/boards/{id}", (BoardsDbContext db, string id) =>
+{
+    var board = db.Boards.FirstOrDefault(b => b.Id == id);
+    if (board is null) return Results.NotFound(new { error = $"unknown board '{id}'" });
+    db.Evidence.RemoveRange(db.Evidence.Where(e => e.BoardId == id));
+    db.BoardNodes.RemoveRange(db.BoardNodes.Where(n => n.BoardId == id));
+    db.Boards.Remove(board);
+    db.SaveChanges();
+    return Results.Ok(new { ok = true });
+});
+
 // --- change events (deploys/config/flags); tolerant if not generated yet --
 app.MapGet("/api/change-events", (WeaverDbContext db, string? from, string? to, string? target) =>
     ChangeEvents(db, from, to, target));
