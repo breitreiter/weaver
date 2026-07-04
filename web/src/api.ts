@@ -56,6 +56,7 @@ export interface Facets {
   subsystems: string[]; kinds: string[]; teams: string[]
   metrics: string[]; logLevels: string[]; logTemplates: string[]
   routes: string[]; traceStatuses: string[]; changeKinds: string[]
+  knowledgeSources: string[]
 }
 export interface EvidenceRef { kind: string; aspect: string; at?: string | null; payload?: unknown; refId?: string | null }
 export interface PinTarget { nodeIds: string[]; evidence?: EvidenceRef | null }
@@ -67,7 +68,7 @@ export type SearchParams = {
   subsystem?: string; kind?: string; team?: string
   level?: string; template?: string; route?: string; status?: string; minMs?: number
   metric?: string; split?: string; z?: number; minPct?: number; limit?: number
-  service?: string; trace?: string
+  service?: string; trace?: string; source?: string
   from?: string; to?: string
 }
 

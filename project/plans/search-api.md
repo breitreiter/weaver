@@ -21,6 +21,8 @@ GET /api/search/facets
   logTemplates:  string[],
   routes:        string[],                // request_type ids
   traceStatuses: string[],                // ok|error|timeout
+  changeKinds:   string[],                // deploy|config|migration|feature_flag
+  knowledgeSources: string[],             // doc|runbook|incident|board
 }
 ```
 
@@ -35,13 +37,14 @@ typed results, each already carrying *how to pin it*.
 
 ```
 GET /api/search
-  ?scope = services | anomalies | logs | traces | metrics
-  &q          free text (log FTS5; service-id match)
+  ?scope = services | anomalies | logs | traces | metrics | changes | knowledge
+  &q          free text (log FTS5 / knowledge FTS5; service-id match)
   &subsystem= &kind= &team=        service facets (apply to every scope via the subject's service)
   &level= &template=               logs
   &route= &status= &minMs=         traces
   &metric= &subjectKind=           metrics
-  &from= &to=                      window
+  &source=                         knowledge (doc|runbook|incident|board)
+  &from= &to=                      window (IGNORED by knowledge — it's timeless)
   &split= &z= &minPct=             anomalies/timeline params
   &limit=
 -> SearchResult[]
@@ -85,10 +88,19 @@ evidence share one shape.
 | `logs` | `message` / `level · svc · time` | `[serviceId]` | `{log, templateId, ts, LogEventDto}` |
 | `traces` | `route Nms status` / hot hop | participant svcs (root + hottest `self_ms`) | `{trace, "route:R", startedAt, span breakdown}` |
 | `metrics` | `svc metric` / shape | `[subjectId]` | `{metric, metric, window, shape_code + prose}` |
+| `changes` | `summary` / `kind · ts · target` | `[targetId]` (or `[]` fleet-wide) | `{change, kind, ts, ChangeEventDto}` |
+| `knowledge` | `title` / `source · svc · part` | `[serviceId]` | `{knowledge, sourceRef\|source, at:null, snippet}` |
 
 Reuses what's built: `Analysis.Anomalies/Timeline`, FTS5 logs, the `Trajectory`
 encoder for metric payloads. Ordering is neutral (magnitude / recency /
-duration), never a cause-score.
+duration / service), never a cause-score.
+
+> **Knowledge is the one scope backed by a NEW stored table** — the rest are
+> pure query-layer over the read-only telemetry, but the knowledge bag is a
+> genuine new data source (a `knowledge_snippets` table + FTS5, emitted by
+> datagen). It's still read-only observation; it just isn't *derived* from the
+> telemetry. Timeless → the pin's evidence `at` is `null` and the window facets
+> skip it. Canonical spec: `knowledge-snippets.md`.
 
 > Cross-type unified search ("everything matching `q`, mixed") is a later
 > enhancement; v1 is one scope per query (mirrors the CLI verbs).
@@ -108,10 +120,13 @@ GET /api/nodes/{id}/evidence?from=&to=&base=
   logs:    [ { templateId, level, count, sample, newSinceBase } ],  // grouped; "new template since base" is high-signal
   traces:  { participated, slow:[…], errored:[…], hotSpans:[{route, self_ms, status}] },
   edges:   [ { edgeId, peer, direction, deltaSummary } ], // edges touching this node
+  knowledge: [ { refId, source, sourceRef, title, excerpt } ], // NOT window-filtered — snippets are timeless
 }
 ```
 
-This is the time-scoped, multi-signal view of one node. The evidence panel
+This is the time-scoped, multi-signal view of one node — plus the timeless
+knowledge attached to it (the window filters skip that section, like the trace
+count). The evidence panel
 renders it; the operator (or agent) pins slices of it onto the board. It's the
 same dossier whether reached from a search result or from clicking a board node.
 

@@ -188,6 +188,32 @@ a server-computed verdict.
 | `decorations` | object[] | `{ target, role: suspect\|blast_radius\|healthy, note }` |
 | `narrative` | markdown | what the investigator concluded |
 
+### KnowledgeSnippet (authored artifact — the one non-telemetry stored source)
+
+A blended bag of factoids about the system: docs, runbooks, prior incidents,
+prior board text. Unlike everything above (raw observed telemetry), a snippet is
+an authored *artifact* — someone wrote that doc; we observe it as a stored fact.
+Still no verdict: it holds recorded out-of-band context, never a cause label.
+Each attaches to one service (scaffolds into `evidence`) and carries **no
+timestamp** — it sits outside the telemetry window. Full spec (chunking,
+authoring discipline, the demo posture): `knowledge-snippets.md`.
+
+| field | type | notes |
+|---|---|---|
+| `id` | slug | typed id `kn:<id>` |
+| `service_id` | slug | **required** → `services.id` |
+| `source` | enum | `doc \| runbook \| incident \| board` |
+| `source_ref` | string? | citation flavor: `INC-2411`, `wiki/…` |
+| `title` | string | headline — **self-situating** (carries its search keywords) |
+| `body` | text | one concept, 1–3 paragraphs |
+| `doc_ref` | slug? | parent-document id; chunks of one doc share it |
+| `seq` | int? | position within `doc_ref`; null for a loose factoid |
+
+Stored in `weaver.db` (`knowledge_snippets` + a `knowledge_snippets_fts` FTS5
+index over title+body), emitted by datagen from a `knowledge:` list authored in
+the topology spec. Read-only like all telemetry; queries are guarded so an older
+db without the table still serves.
+
 ## Analysis surface — primitives enumerate, the reasoner discriminates
 
 Canonical spec: `analysis-architecture.md`. The lines that bind this schema:

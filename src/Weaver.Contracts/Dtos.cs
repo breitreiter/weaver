@@ -132,6 +132,19 @@ public record CreatedDto(string Id, string Url);
 // --- change events (deploys/config/flags — telemetry, per the dataset contract)
 public record ChangeEventDto(string Id, string Ts, string Kind, string? TargetId, string Summary, JsonElement Fields);
 
+// --- knowledge snippets (the blended bag of factoids; see knowledge-snippets.md)
+// An authored artifact attached to one service, no timestamp. DocRef+Seq chain
+// the chunks of one document. Source: doc | runbook | incident | board.
+public record KnowledgeSnippetDto(
+    string Id, string ServiceId, string Source, string? SourceRef,
+    string Title, string Body, string? DocRef, int? Seq);
+
+// Drill-in reader: the full snippet plus the keep-reading affordance (its
+// position in the parent doc and the prev/next chunk ids, all null for a loose
+// factoid). DocTotal is the chunk count of the parent doc.
+public record KnowledgeDetailDto(
+    KnowledgeSnippetDto Snippet, int? DocTotal, string? PrevId, string? NextId);
+
 // --- search API (the left-panel query layer; see search-api.md) ----------
 
 public record WindowDto(string Start, string End);
@@ -146,7 +159,8 @@ public record FacetsDto(
     IReadOnlyList<string> LogTemplates,
     IReadOnlyList<string> Routes,
     IReadOnlyList<string> TraceStatuses,
-    IReadOnlyList<string> ChangeKinds);
+    IReadOnlyList<string> ChangeKinds,
+    IReadOnlyList<string> KnowledgeSources);
 
 // What to pin: the node(s) + (optionally) the evidence to layer onto them. RefId
 // carries the finding's canonical typed id so the board keeps one identity per
@@ -186,12 +200,16 @@ public record ChartExecDto(IReadOnlyList<string> Columns,
 // node-evidence dossier
 public record NodeSignalDto(string Metric, string ShapeCode, string Prose);
 public record NodeLogGroupDto(string TemplateId, string Level, int Count, string Sample);
+// one knowledge snippet as it appears in the dossier — its typed id + headline +
+// a short excerpt (the full body is a drill-in via `kn:` / GET /api/knowledge/{id}).
+public record NodeKnowledgeDto(string RefId, string Source, string? SourceRef, string Title, string Excerpt);
 public record NodeEvidenceDto(
     ServiceDto Node,
     WindowDto Window,
     IReadOnlyList<NodeSignalDto> Signals,
     IReadOnlyList<NodeLogGroupDto> Logs,
     IReadOnlyList<ChangeEventDto> Changes,
-    int TracesParticipated);
+    int TracesParticipated,
+    IReadOnlyList<NodeKnowledgeDto> Knowledge);
 
 

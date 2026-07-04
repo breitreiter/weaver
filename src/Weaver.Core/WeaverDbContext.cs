@@ -15,6 +15,7 @@ public sealed class WeaverDbContext : DbContext
     public DbSet<TraceEntity> Traces => Set<TraceEntity>();
     public DbSet<SpanEntity> Spans => Set<SpanEntity>();
     public DbSet<ChangeEventEntity> ChangeEvents => Set<ChangeEventEntity>();
+    public DbSet<KnowledgeSnippetEntity> Knowledge => Set<KnowledgeSnippetEntity>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -115,6 +116,20 @@ public sealed class WeaverDbContext : DbContext
             e.Property(x => x.TargetId).HasColumnName("target_id");
             e.Property(x => x.Summary).HasColumnName("summary");
             e.Property(x => x.Fields).HasColumnName("fields");
+        });
+
+        b.Entity<KnowledgeSnippetEntity>(e =>
+        {
+            e.ToTable("knowledge_snippets");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.ServiceId).HasColumnName("service_id");
+            e.Property(x => x.Source).HasColumnName("source");
+            e.Property(x => x.SourceRef).HasColumnName("source_ref");
+            e.Property(x => x.Title).HasColumnName("title");
+            e.Property(x => x.Body).HasColumnName("body");
+            e.Property(x => x.DocRef).HasColumnName("doc_ref");
+            e.Property(x => x.Seq).HasColumnName("seq");
         });
     }
 }

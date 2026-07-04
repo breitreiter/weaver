@@ -17,13 +17,14 @@ const TYPE_ICON: Record<string, string> = {
   trace: 'account_tree',
   metric: 'monitoring',
   change: 'deployed_code_update',
+  knowledge: 'menu_book',
 }
 
 // The workbench: three equal panes (1:1:1) — search (forage), board (structure),
 // evidence (narrative). Search is structured (scope + facets + free text) and
 // returns rich, typed, pinnable result cards over /api/search.
 
-const SCOPES = ['anomalies', 'traces', 'logs', 'services', 'metrics', 'changes']
+const SCOPES = ['anomalies', 'traces', 'logs', 'services', 'metrics', 'changes', 'knowledge']
 
 // results are a capped, sorted page — never a total. When the cap is hit we say
 // so, and name the sort, so "60" never reads as "there happen to be exactly 60".
@@ -32,7 +33,7 @@ const SCOPES = ['anomalies', 'traces', 'logs', 'services', 'metrics', 'changes']
 const RESULT_LIMIT = 60
 const SORT_BY: Record<string, string> = {
   anomalies: 'magnitude', traces: 'duration', logs: 'recency',
-  changes: 'time', services: 'name',
+  changes: 'time', services: 'name', knowledge: 'service',
 }
 
 // which facet controls each scope shows
@@ -43,6 +44,7 @@ const CONTROLS: Record<string, string[]> = {
   services: ['q', 'subsystem', 'kind', 'team'],
   metrics: ['metric', 'subsystem'],
   changes: ['subsystem', 'kind', 'time'],
+  knowledge: ['q', 'source', 'subsystem'],
 }
 
 export default function Workbench() {
@@ -104,7 +106,7 @@ export default function Workbench() {
       const p: SearchParams = { scope, limit: RESULT_LIMIT }
       if (q.trim()) p.q = q.trim()
       if (f.service) p.service = f.service
-      for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric', 'trace'])
+      for (const k of ['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric', 'trace', 'source'])
         if (f[k]) (p as Record<string, unknown>)[k] = f[k]
       // datetime-local emits "YYYY-MM-DDTHH:mm" — pad seconds so the range is
       // inclusive of the whole boundary minute (backend compares ISO strings).
@@ -183,7 +185,7 @@ export default function Workbench() {
     return ({
       subsystem: facets.subsystems, kind: facets.kinds, team: facets.teams,
       level: facets.logLevels, template: facets.logTemplates, route: facets.routes,
-      status: facets.traceStatuses, metric: facets.metrics,
+      status: facets.traceStatuses, metric: facets.metrics, source: facets.knowledgeSources,
     } as Record<string, string[]>)[k] ?? []
   }
 
@@ -219,7 +221,7 @@ export default function Workbench() {
               </select>
             </label>
           )}
-          {['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric'].filter(k => controls.includes(k)).map(k => (
+          {['subsystem', 'kind', 'team', 'level', 'template', 'route', 'status', 'metric', 'source'].filter(k => controls.includes(k)).map(k => (
             <label key={k}>{k}
               <select value={f[k] ?? ''} onChange={e => setField(k, e.target.value)}>
                 <option value="">any</option>
@@ -361,6 +363,19 @@ function ResultCard({ r, tz, pinned, onPin, onExplore }: { r: SearchResult; tz: 
         {startedAt && <span className="card-time mono" title={`trace start (${tz})`}>{startedAt}</span>}
         {r.subtitle}
       </div>
+      {r.type === 'knowledge' && (
+        // a snippet is prose — show a body excerpt so the card reads without a
+        // drill-in, and let the reader open the attached service's dossier.
+        <div className="know-body">
+          <p className="know-excerpt">{r.payload?.excerpt ?? r.payload?.body}</p>
+          {r.payload?.serviceId && (
+            <button className="hop-svc mono" title={`open the dossier for ${r.payload.serviceId}`}
+              onClick={() => onExplore('services', r.payload.serviceId)}>
+              <Icon name="deployed_code" size={13} /> {r.payload.serviceId}
+            </button>
+          )}
+        </div>
+      )}
       {r.type === 'trace' && Array.isArray(r.payload?.spans) && <TraceMini spans={r.payload.spans} onExplore={onExplore} />}
       {r.type === 'log' && r.payload?.traceId && (
         // the correlation pivot: this log fired under a sampled trace — jump to it.

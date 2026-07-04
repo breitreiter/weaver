@@ -75,6 +75,23 @@ public class ChangeEventEntity
     public string Fields { get; set; } = "{}";     // json
 }
 
+// Knowledge snippets — a blended bag of authored factoids (docs / runbooks /
+// prior incidents / prior board text) about the system. Observed artifacts, not
+// derived judgments; each attaches to one service and carries no timestamp.
+// DocRef+Seq chain the chunks of one document. May not exist in the DB yet
+// (older generated dbs predate the table) — queries are guarded.
+public class KnowledgeSnippetEntity
+{
+    public string Id { get; set; } = "";
+    public string ServiceId { get; set; } = "";
+    public string Source { get; set; } = "";     // doc | runbook | incident | board
+    public string? SourceRef { get; set; }         // citation flavor: INC-2411, wiki/…
+    public string Title { get; set; } = "";
+    public string Body { get; set; } = "";
+    public string? DocRef { get; set; }            // parent-document id for multi-chunk docs
+    public int? Seq { get; set; }                  // position within DocRef; null for a loose factoid
+}
+
 public class SpanEntity
 {
     public string Id { get; set; } = "";

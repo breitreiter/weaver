@@ -222,3 +222,136 @@ incident:
     - { at_minute: 24,  kind: feature_flag, target: recommendations,      summary: "Enabled flag recs_v2_ranking" }
     - { at_minute: 78,  kind: config,       target: catalog-db,           summary: "Raised catalog-db statement_timeout 2s to 5s" }
     - { at_minute: 103, kind: deploy,       target: notifications-worker, summary: "Deployed notifications-worker v1.9.3" }
+
+# ---------------------------------------------------------------------------
+# Knowledge snippets — the blended bag of factoids (docs / runbooks / prior
+# incidents / prior board text). Authored verbatim; the generator copies them
+# into the knowledge_snippets table untouched. See
+# project/plans/knowledge-snippets.md.
+#
+# ⚠ STARTER SET — deliberately small and mostly-boring. It exercises the whole
+# feature end-to-end (FTS search, service scaffolding, the doc_ref/seq chain,
+# the context-poor decoy) WITHOUT solving the puzzle in-band. Per the private
+# ground truth, exactly ONE fact is genuinely out-of-band — "was a sale
+# running?" — and it MUST NOT appear here; putting it in searchable knowledge
+# would collapse the demand-vs-deploy ambiguity the whole incident is built on.
+# The pool-sizing chunk grounds the *mechanism ceiling* (why 40 connections is
+# the limit) without naming a cause or mentioning the sale.
+#
+# TODO(joseph): the full load-bearing + decoy authoring (the rhyming-but-not-
+# repeating set, staleness texture, per-team voice via the model-drafted filler)
+# is a follow-up to do against project/private/ground-truth-flash-sale.md — it's
+# a puzzle-design decision, not something to bake in unreviewed.
+# ---------------------------------------------------------------------------
+knowledge:
+  # --- a multi-chunk runbook (doc_ref chains the chunks; seq auto-assigned) --
+  - id: kn-payments-db-runbook-overview
+    service_id: payments-db
+    source: runbook
+    source_ref: runbook/payments-db
+    doc_ref: runbook/payments-db
+    title: "payments-db operations runbook — overview & ownership"
+    body: >-
+      payments-db is the system of record for the money path: authorizations,
+      captures, refunds, and the ledger. Owned by the payments team; PagerDuty
+      service "payments-core". It is intentionally isolated from the catalog and
+      cart datastores so a noisy neighbour on browse traffic can never touch a
+      settlement. Read replicas exist for reporting only — the write path and
+      all checkout reads go to the primary.
+
+  - id: kn-payments-db-runbook-pool
+    service_id: payments-db
+    source: runbook
+    source_ref: runbook/payments-db
+    doc_ref: runbook/payments-db
+    title: "payments-db connection pool — sizing rationale (pool_max=40)"
+    body: >-
+      The primary runs a deliberately small connection pool: pool_max=40. This
+      is lower than the fleet default (50) on purpose — settlement queries are
+      short and the pool is sized to the p99 concurrency observed at normal peak
+      (Black-Friday-2024 planning, ~260 rps steady, ~500 rps peak). A small pool
+      protects the primary from connection-storm thundering herds and keeps
+      per-connection memory bounded. The trade-off: there is little headroom if
+      sustained throughput grows well beyond the planned peak — revisit the
+      sizing (and consider PgBouncer transaction pooling) before onboarding a
+      workload that would push steady concurrency past ~30 in-use connections.
+
+  - id: kn-payments-db-runbook-escalation
+    service_id: payments-db
+    source: runbook
+    source_ref: runbook/payments-db
+    doc_ref: runbook/payments-db
+    title: "payments-db runbook — escalation & safe levers"
+    body: >-
+      If payments-db is the suspected bottleneck: first confirm whether time is
+      spent executing vs. waiting (exec_ms vs pool_wait_ms on the slow spans) —
+      they point at different fixes. Safe levers under load: raise pool_max in
+      steps of 10 (primary has headroom to ~80 before memory pressure), shed
+      non-essential read traffic, enable the checkout queue. Do NOT fail over
+      the primary for a latency-only symptom; failover drops in-flight
+      authorizations. Escalate to payments-oncall, then dba-oncall.
+
+  # --- deliberate context-poor chunk (reachable by reading the runbook) ------
+  - id: kn-payments-db-capacity-note
+    service_id: payments-db
+    source: board
+    title: "capacity note"
+    body: >-
+      bumped a couple of the pools after last time, should hold us through the
+      quarter. left payments on the smaller one on purpose per the dba. revisit
+      if the numbers creep.
+
+  # --- boring background (realism; low puzzle weight) ------------------------
+  - id: kn-recommendations-recs-v2
+    service_id: recommendations
+    source: doc
+    source_ref: wiki/discovery/recs-v2
+    title: "recommendations — recs_v2_ranking flag & model warmup"
+    body: >-
+      recs_v2_ranking switches the recommendations service to the v2 learned
+      ranker. The v2 model rebuilds its feature cache lazily on rollout, so p99
+      latency drifts upward for a while after the flag is enabled before
+      settling — expected warmup behaviour, tracked in the discovery dashboard.
+      recommendations is best-effort: the storefront renders without it, and it
+      is not on the checkout path.
+
+  - id: kn-search-api-ownership
+    service_id: search-api
+    source: doc
+    source_ref: wiki/discovery/search-api
+    title: "search-api — ownership, SLO & dependencies"
+    body: >-
+      search-api is owned by the discovery team (not catalog, despite sitting in
+      the catalog subsystem). SLO: p99 < 250ms at 3x baseline load. It reads
+      from catalog-db and is a soft dependency of the storefront — a slow search
+      degrades the results page but never blocks add-to-cart or checkout.
+
+  - id: kn-web-gateway-slo
+    service_id: web-gateway
+    source: doc
+    source_ref: wiki/platform/web-gateway
+    title: "web-gateway — edge SLO & 5xx runbook pointer"
+    body: >-
+      web-gateway is the single public ingress; every user-facing route enters
+      here. Edge SLO: 99.9% non-5xx monthly. A rise in gateway 5xx is almost
+      always a downstream symptom — the gateway itself is near-stateless — so
+      treat gateway errors as a signal to look one hop in, at whichever route
+      (/checkout, /search, /browse) is carrying them.
+
+  # --- a prior incident that RHYMES (different trigger, same mechanism family)
+  - id: kn-inc-2411-checkout-latency
+    service_id: checkout-api
+    source: incident
+    source_ref: INC-2411
+    title: "postmortem INC-2411 — checkout latency during 2024 holiday peak"
+    body: >-
+      During the 2024 holiday peak, checkout p99 tripled and a fraction of
+      checkouts timed out. Investigation traced the stall to a downstream
+      datastore whose connection pool saturated under the elevated order volume;
+      queries were fast individually but spent seconds waiting to acquire a
+      connection. Remediation was to raise the pool and add read replicas for
+      the reporting queries that had been competing for connections. Action item
+      (partially done): capacity-plan datastore pools against projected peak
+      concurrency, not just steady-state. Note this was a different datastore and
+      a different season — filed here because checkout is the user-visible
+      symptom the same way each time.

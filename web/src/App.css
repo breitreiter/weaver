@@ -114,6 +114,16 @@
 /* trace mini span breakdown */
 .log-trace { margin-top: 6px; font-size: 11px; }
 .log-trace .hop-svc { width: auto; display: inline-flex; align-items: center; gap: 4px; }
+
+/* knowledge snippet — result-card excerpt + pinned-evidence body */
+.know-body { margin-top: 8px; }
+.know-excerpt { color: var(--text-dim); font-size: 11px; line-height: 1.5; margin: 0 0 6px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.know-body .hop-svc { width: auto; display: inline-flex; align-items: center; gap: 4px; }
+.know-evidence { margin-top: 6px; }
+.know-cite { color: var(--text-dim); font-size: 10px; margin-bottom: 4px; }
+.know-evidence-body { color: var(--text); font-size: 11px; line-height: 1.55; margin: 0;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .trace-mini { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .hop { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .hop-svc { color: var(--text); width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

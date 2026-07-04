@@ -16,7 +16,7 @@ import { Icon } from './Icon'
 const KIND_ICON: Record<string, string> = {
   anomaly: 'warning', log: 'description',
   trace: 'account_tree', metric: 'monitoring', change: 'deployed_code_update',
-  chart: 'bar_chart',
+  chart: 'bar_chart', knowledge: 'menu_book',
 }
 
 // service-level "find more for this node" buttons — all five legal scopes, each
@@ -110,6 +110,7 @@ export default function Evidence({ board, focus, onFocus, onExplore, onDeleteEvi
                     <div className="ev-item-sub mono">{ev.summary}</div>
                     {ev.kind === 'metric' && real && <MetricSparkline service={g.service} metric={ev.aspect} />}
                     {ev.kind === 'chart' && <ChartEvidence payload={ev.payload} />}
+                    {ev.kind === 'knowledge' && <KnowledgeEvidence payload={ev.payload} />}
                     {searches.length > 0 && (
                       <div className="ev-item-search" onClick={e => e.stopPropagation()}>
                         {searches.map(s => (
@@ -185,6 +186,13 @@ function itemSearches(ev: EvidenceItem): ItemSearch[] {
       return a ? [{ scope: 'metrics', icon: 'monitoring', label: 'this metric', facets: { metric: a } }] : []
     case 'change':
       return a ? [{ scope: 'changes', icon: 'deployed_code_update', label: 'changes like this', facets: { kind: a } }] : []
+    case 'knowledge': {
+      // more from the same source (doc/runbook/incident/board). aspect is the
+      // sourceRef when present, else the bare source; only the bare source is a
+      // valid facet value, so filter on the payload's source.
+      const src = (ev.payload as { source?: string } | undefined)?.source
+      return src ? [{ scope: 'knowledge', icon: 'menu_book', label: `more ${src}`, facets: { source: src } }] : []
+    }
     default:
       // metric items already show the whole series; nothing more specific is useful.
       return []
@@ -210,6 +218,23 @@ function aroundWindow(at: string): Record<string, string> {
 
 // service ids are usually safe selector chars, but guard the selector anyway.
 const cssId = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_')
+
+// A pinned knowledge snippet (evidence kind `knowledge`). The snapshot carries
+// the full body + provenance; render the citation line and the prose (clamped —
+// the full read is the `kn:` drill-in). No time chip: snippets are timeless.
+type KnowledgePayload = { source?: string; sourceRef?: string; title?: string; body?: string; docRef?: string; seq?: number }
+function KnowledgeEvidence({ payload }: { payload: unknown }) {
+  const p = (payload ?? {}) as KnowledgePayload
+  if (!p.body && !p.title) return null
+  const cite = [p.source, p.sourceRef].filter(Boolean).join(' · ')
+  const part = p.docRef && p.seq != null ? `${p.docRef} · part ${p.seq}` : p.docRef
+  return (
+    <div className="know-evidence">
+      <div className="know-cite mono">{[cite, part].filter(Boolean).join('  ·  ')}</div>
+      {p.body && <p className="know-evidence-body">{p.body}</p>}
+    </div>
+  )
+}
 
 // --- metric sparkline -----------------------------------------------------
 

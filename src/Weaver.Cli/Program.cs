@@ -16,11 +16,11 @@ FacetsDto? facetsCache = null;  // lazily fetched for time/did-you-mean resoluti
 
 // the six search scopes + their sort labels, mirroring the UI's left panel.
 GraphDto? graphCache = null;  // lazily fetched for did-you-mean service resolution
-string[] scopes = ["anomalies", "traces", "logs", "services", "metrics", "changes"];
+string[] scopes = ["anomalies", "traces", "logs", "services", "metrics", "changes", "knowledge"];
 var sortBy = new Dictionary<string, string>
 {
     ["anomalies"] = "magnitude", ["traces"] = "duration", ["logs"] = "recency",
-    ["changes"] = "time", ["services"] = "name",
+    ["changes"] = "time", ["services"] = "name", ["knowledge"] = "service",
 };
 
 try
@@ -33,6 +33,7 @@ try
         case "logs": Logs(); break;
         case "traces": Traces(); break;
         case "trace": Trace(); break;
+        case "snippet": Snippet(); break;
         case "changes": Changes(); break;
         case "blast-radius": BlastRadius(); break;
         case "anomalies": Anomalies(); break;
@@ -63,8 +64,8 @@ void Help()
 
         forage (the same lens the UI's left panel uses)
           search <scope> [facets]       the unified query: anomalies | traces |
-                                          logs | services | metrics | changes.
-                                          every row prints a typed id you can pin.
+                                          logs | services | metrics | changes |
+                                          knowledge. every row prints a typed id.
           facets                        what subsystems/levels/routes/… exist
           service <id>                  one service: deps + a shape per signal
           metrics <id> [--metric m]     a signal's trajectory (shape + prose)
@@ -72,7 +73,8 @@ void Help()
           traces [--route r]            sampled request traces, slowest first
           trace <id>                    one trace: spans + where self-time went
           changes [--target s]          deploy/config/flag events
-          evidence <service>            the node dossier (signals/logs/changes)
+          snippet <kn:id>               read one knowledge snippet in full
+          evidence <service>            the node dossier (signals/logs/knowledge)
 
         correlate (enumerations, never a verdict)
           anomalies [--split t] [--z n] what moved vs the base window
@@ -238,6 +240,37 @@ void Trace()
     Hint($"weaver service {d.Spans.LastOrDefault()?.ServiceId ?? "<id>"}");
 }
 
+// Read a knowledge snippet in full (search rows truncate; a body is paragraphs).
+// Accepts a bare id or the kn: form. Prints the whole body + provenance, and —
+// when the snippet is part of a document — the keep-reading affordance.
+void Snippet()
+{
+    var arg = argv.Need(0, "knowledge id (kn:… or bare id)");
+    var kid = arg.StartsWith("kn:") ? arg[3..] : arg;
+    var d = api.Get<KnowledgeDetailDto>($"/api/knowledge/{Uri.EscapeDataString(kid)}");
+    if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
+
+    var k = d.Snippet;
+    var cite = k.SourceRef is { } r ? $"{k.Source} · {r}" : k.Source;
+    Console.WriteLine($"kn:{k.Id}   [{cite}]   service={k.ServiceId}");
+    if (k.DocRef is { } doc && k.Seq is { } s && d.DocTotal is { } tot)
+        Console.WriteLine($"part {s} of {tot} of {doc}");
+    Console.WriteLine();
+    Console.WriteLine(k.Title);
+    Console.WriteLine();
+    Console.WriteLine(k.Body);
+    if (d.PrevId is not null || d.NextId is not null)
+    {
+        Console.WriteLine();
+        var nav = new List<string>();
+        if (d.PrevId is not null) nav.Add($"prev: weaver snippet {d.PrevId}");
+        if (d.NextId is not null) nav.Add($"next: weaver snippet {d.NextId}");
+        Console.WriteLine(string.Join("    ", nav));
+    }
+    Hint($"weaver pin kn:{k.Id}   (pin this snippet to {k.ServiceId})",
+         $"weaver evidence {k.ServiceId}");
+}
+
 void Changes()
 {
     var qs = "/api/change-events?";
@@ -353,6 +386,7 @@ void Facets()
     Row("routes:", f.Routes);
     Row("trace stat:", f.TraceStatuses);
     Row("change kinds:", f.ChangeKinds);
+    Row("know sources:", f.KnowledgeSources);
     Hint("weaver search anomalies --subsystem <s>", "weaver search logs --grep \"<term>\" --level error");
 }
 
@@ -403,6 +437,16 @@ void NodeEvidence()
             Console.WriteLine($"  {Clock(c.Ts),-10} {c.Kind,-12} {c.Summary}");
     }
     Console.WriteLine($"traces touching this service: {d.TracesParticipated}");
+    if (d.Knowledge.Count > 0)
+    {
+        Console.WriteLine("knowledge:");
+        foreach (var k in d.Knowledge)
+        {
+            var cite = k.SourceRef is { } r ? $"{k.Source}·{r}" : k.Source;
+            Console.WriteLine($"  {k.RefId,-34} [{cite}]  {k.Title}");
+            Console.WriteLine($"      {k.Excerpt}");
+        }
+    }
     Hint($"weaver search anomalies --service {id}", $"weaver pin <id>   (pin a finding from above)");
 }
 
@@ -421,6 +465,7 @@ string SearchQuery(string scope, int limit)
     Add("status", argv.Opt("status"));
     Add("metric", argv.Opt("metric"));
     Add("service", argv.Opt("service"));
+    Add("source", argv.Opt("source"));
     Add("minMs", argv.Opt("min-ms"));
     Add("from", ResolveTime(argv.Opt("from")));
     Add("to", ResolveTime(argv.Opt("to")));
@@ -615,7 +660,7 @@ static string Cell(object? o) => o switch
 static bool IsTypedId(string s)
 {
     var c = s.IndexOf(':');
-    return c > 0 && s[..c] is "an" or "tr" or "log" or "me" or "ce" or "svc" or "ch";
+    return c > 0 && s[..c] is "an" or "tr" or "log" or "me" or "ce" or "svc" or "ch" or "kn";
 }
 
 void Unpin()
