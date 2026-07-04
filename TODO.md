@@ -110,12 +110,14 @@ context-poor chunk are the texture). Plan:
       section + `weaver snippet <kn:id>` drill-in with keep-reading affordance.
 - [x] Web: `knowledge` scope + `--source` facet + result card + `knowledge`
       evidence-kind card.
-- [ ] **Author the real flash-sale snippet set** — the two-tier authoring
-      (hand-authored load-bearing/decoy coupled to `project/private/
-      ground-truth-flash-sale.md`; per-team voice via model-drafted filler). The
-      out-of-band "was a sale running?" fact MUST stay out of the bag — putting it
-      in searchable knowledge would collapse the demand-vs-deploy ambiguity. Do
-      with Joseph; it's puzzle-design, not plumbing.
+- [x] **Author the real flash-sale snippet set** — **Built 2026-07-04.** 34
+      snippets covering all 28 services. Tier A hand-authored + ground-truth-
+      coupled (payments-db pool runbook, INC-2411 rhyme, the promo-api "growth
+      shipped something" decoy, payments-api release-hygiene exoneration); Tier B
+      per-service background drafted by free local models (imp-qchat/imp-qcoder
+      via minrouter, one profile per team for voice), ground-truth-isolated and
+      reviewed. The out-of-band "was a sale running?" fact is held OUT of the bag
+      by design. Leak-grepped clean; verified live (search/FTS/dossier/decoys).
 - [ ] End-to-end verify against a restarted API + regenerated db (Joseph runs the
       servers) — CLI `search knowledge` / `snippet` / `evidence`, web scope + pin.
 

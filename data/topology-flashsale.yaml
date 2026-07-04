@@ -229,19 +229,22 @@ incident:
 # into the knowledge_snippets table untouched. See
 # project/plans/knowledge-snippets.md.
 #
-# ⚠ STARTER SET — deliberately small and mostly-boring. It exercises the whole
-# feature end-to-end (FTS search, service scaffolding, the doc_ref/seq chain,
-# the context-poor decoy) WITHOUT solving the puzzle in-band. Per the private
-# ground truth, exactly ONE fact is genuinely out-of-band — "was a sale
-# running?" — and it MUST NOT appear here; putting it in searchable knowledge
-# would collapse the demand-vs-deploy ambiguity the whole incident is built on.
-# The pool-sizing chunk grounds the *mechanism ceiling* (why 40 connections is
-# the limit) without naming a cause or mentioning the sale.
+# Two tiers (see knowledge-snippets.md → Authoring pipeline):
+#   • Tier A — hand-authored, coupled to project/private/ground-truth-flash-sale.md:
+#     the payments-db pool-sizing runbook (the mechanism ceiling), the context-poor
+#     capacity note, the rhyming INC-2411 postmortem, the recs_v2 drift-grounding,
+#     and the two decoys the ground truth calls for — promo-api ("growth shipped
+#     something") and payments-api release hygiene (exonerates the v2.4.1 deploy).
+#   • Tier B — per-service background (ownership / SLO / architecture), drafted by
+#     free local models via minrouter (imp-qchat / imp-qcoder, one profile per team
+#     for many-hands voice), ground-truth-isolated: the models saw a service card,
+#     never the answer, so they can't leak it. Reviewed here before landing.
 #
-# TODO(joseph): the full load-bearing + decoy authoring (the rhyming-but-not-
-# repeating set, staleness texture, per-team voice via the model-drafted filler)
-# is a follow-up to do against project/private/ground-truth-flash-sale.md — it's
-# a puzzle-design decision, not something to bake in unreviewed.
+# ⚠ THE ONE LINE WE HOLD: exactly ONE fact is genuinely out-of-band — "was a sale
+# running?" — and it MUST NOT appear anywhere in this bag. Putting it in searchable
+# knowledge would collapse the demand-vs-deploy ambiguity the whole incident is
+# built on. Snippets ground the *mechanism* (why 40 connections is the ceiling) and
+# make the *right* suspects tempting; they never confirm the sale or name a cause.
 # ---------------------------------------------------------------------------
 knowledge:
   # --- a multi-chunk runbook (doc_ref chains the chunks; seq auto-assigned) --
@@ -355,3 +358,580 @@ knowledge:
       concurrency, not just steady-state. Note this was a different datastore and
       a different season — filed here because checkout is the user-visible
       symptom the same way each time.
+
+  # === Tier A: hand-authored decoys (ground-truth-coupled) ===
+  # --- hand-authored decoys the ground truth calls for (non-leaking) --------
+  # promo-api: the tempting "growth shipped something for the sale" wrong lead.
+  # Makes promo a juicy suspect via the team-seam + frequent-config angle. Never
+  # says a sale is live NOW (that's the one out-of-band fact). The telemetry does
+  # NOT support promo as cause (no pool exhaustion, no exec regression) — so it's
+  # tempting-but-clearable, exactly the intended decoy dynamic.
+  - id: kn-promo-api-campaigns
+    service_id: promo-api
+    source: doc
+    source_ref: wiki/growth/promo-api
+    title: "promo-api — promotional pricing & campaign flags (growth-owned)"
+    body: >-
+      promo-api applies promotional discounts and campaign flags during checkout.
+      It sits on the checkout path but is owned by the growth team, not checkout —
+      a team seam worth remembering, because a checkout problem can originate in a
+      service the checkout team doesn't own or deploy. Growth ships promo-api
+      frequently and independently, often several campaign-config changes in a
+      week, on its own release cadence. It reads base prices from catalog-db and
+      layers campaign rules on top. A misconfigured campaign flag is a known cause
+      of checkout pricing errors, so promo config is a common first place to look
+      when checkout misbehaves — though "recently changed" and "at fault" are not
+      the same thing.
+
+  # payments-api: grounds the touches_db change-classification so a copy/styling
+  # deploy reads as low-risk — reinforces v2.4.1's exoneration WITHOUT naming it
+  # or issuing a verdict. The deploy's innocence is already in-band via `changes`.
+  - id: kn-payments-api-release-process
+    service_id: payments-api
+    source: runbook
+    source_ref: runbook/payments-api-releases
+    title: "payments-api — release process & change classification"
+    body: >-
+      payments-api deploys several times a week. Every change is classified on the
+      deploy record: UI, copy, and config changes ship freely on the normal
+      pipeline, while anything that touches the database schema, connection
+      handling, or query paths is flagged (touches_db=true) and gated behind extra
+      review and a migration checklist. The flag is descriptive metadata, not a
+      guarantee — but it tells you where to look: a change tagged touches_db=false
+      carries no data-path or connection-pool risk and is considered safe to ship
+      during peak. When triaging around a deploy, read its classification and its
+      description before assuming the deploy is implicated.
+
+  # === Tier B: per-service background (free local models, reviewed) ===
+  - id: kn-storefront-bff-overview
+    service_id: storefront-bff
+    source: doc
+    source_ref: wiki/storefront/bff
+    title: "storefront-bff — the BFF aggregation layer & ownership"
+    body: >-
+      This service acts as a BFF (Backend for Frontend) layer, aggregating data
+      from product-api, search-api, recommendations, cart-api, and checkout-api to
+      form unified responses for the web and mobile clients. It handles request
+      routing, data normalization, and response composition, reducing frontend
+      complexity and optimizing network efficiency.
+
+      The service is owned and operated by the storefront team, with dependencies
+      on the five upstream APIs mentioned. It runs in a dedicated Kubernetes
+      namespace and is deployed via CI/CD pipelines managed by the team. Health
+      checks and monitoring are integrated with the platform’s central
+      observability stack, and the service maintains versioned API contracts with
+      clients.
+
+  - id: kn-product-api-overview
+    service_id: product-api
+    source: doc
+    source_ref: wiki/catalog/product-api
+    title: "product-api — product detail/listing reads"
+    body: >-
+      This service provides product detail and listing data to frontend consumers.
+      It reads exclusively from catalog-db and maintains a short time-to-live
+      cache for improved performance. The service handles read operations only and
+      does not perform any write actions against the catalog database.
+
+      The service is owned by the catalog team, who are responsible for its
+      maintenance, monitoring, and operational stability. All dependencies center
+      on catalog-db availability and network connectivity. The service does not
+      have any external dependencies beyond the database and its internal caching
+      layer.
+
+      Operational notes: Service instances scale automatically based on read load.
+      Cache invalidation occurs automatically when catalog-db records change. The
+      service runs on standard infrastructure with no special hardware
+      requirements. Monitoring includes database connection health checks and
+      cache hit ratio metrics.
+
+  - id: kn-product-api-slo
+    service_id: product-api
+    source: doc
+    source_ref: wiki/catalog/product-api-slo
+    title: "product-api — SLO & catalog-db dependency"
+    body: >-
+      The product-api service maintains a p99 latency SLO of 200ms under normal
+      load conditions. This target is measured across all public endpoints and
+      includes time spent in dependencies, with monitoring and alerting configured
+      to trigger at 80% of the SLO threshold to allow for proactive investigation.
+
+      The service has a hard dependency on catalog-db for all product data reads.
+      When catalog-db exhibits increased latency or unavailability, product-api
+      applies a 2-second timeout per database request and falls back to a cached
+      version of product data if available. If no cached data exists, the service
+      returns HTTP 503 with a standardized error message. This fallback behavior
+      is designed to limit cascading failures but does not guarantee data
+      freshness. The catalog team owns the service and is responsible for both the
+      SLO compliance and the health of the underlying database.
+
+  - id: kn-auth-api-overview
+    service_id: auth-api
+    source: doc
+    source_ref: wiki/identity/auth-api
+    title: "auth-api — authentication & session issuance"
+    body: >-
+      This service manages user authentication and session handling for the
+      platform. It processes login, signup, and password reset requests while
+      issuing authentication tokens and managing user sessions. The service reads
+      from the user database and writes to the session cache store.
+
+      The service is owned by the identity team and operates as a core component
+      in the authentication flow. It sits on the critical path for all logged-in
+      user experiences but is not required for guest browsing functionality. The
+      service depends on the user database for authentication data and the session
+      cache for storing active user sessions.
+
+      Operational notes: The service runs on a dedicated cluster with auto-scaling
+      enabled based on authentication request volume. Session cache operations use
+      Redis with standard eviction policies. The service maintains read replicas
+      for the user database and implements circuit breaker patterns for cache
+      failures. All authentication endpoints are protected with rate limiting and
+      basic input validation.
+
+  - id: kn-session-cache-overview
+    service_id: session-cache
+    source: runbook
+    source_ref: runbook/session-cache
+    title: "session-cache — session store, TTLs & eviction"
+    body: >-
+      Redis instance stores active user sessions and authentication tokens issued
+      by auth-api, with expiration governed by TTL (Time-To-Live) settings. Data
+      is automatically removed upon TTL expiration; no explicit cleanup is
+      performed. The cache eviction policy follows Redis's LRU (Least Recently
+      Used) algorithm, ensuring space is reclaimed for new entries when memory
+      limits are reached.
+
+      A "cold cache" occurs when session data has expired or been evicted,
+      requiring users to re-authenticate to regain access. This state is normal
+      and expected under steady-state operation. The identity team owns the Redis
+      service, including configuration, monitoring, and eviction behavior. No
+      external dependencies affect session validity beyond auth-api's token
+      issuance logic.
+
+  - id: kn-cart-api-overview
+    service_id: cart-api
+    source: doc
+    source_ref: wiki/checkout/cart-api
+    title: "cart-api — shopping cart service"
+    body: >-
+      The cart service maintains shopping cart state for users, storing data in
+      cart-cache and retrieving product information from product-api. It handles
+      cart operations including add, remove, and update items, while ensuring
+      consistency between user sessions and product details. The service processes
+      requests from frontend applications and other checkout components that need
+      to interact with cart data.
+
+      The service is owned by the checkout team, who are responsible for its
+      development, maintenance, and operational stability. The team handles bug
+      fixes, feature enhancements, and performance tuning for cart-related
+      functionality. They also coordinate with the product-api team for product
+      data synchronization and with the caching team for cache management.
+
+      Dependencies include cart-cache for persistent storage, product-api for
+      product information, and authentication services for user session
+      validation. The service makes synchronous calls to product-api for product
+      details and uses cache operations for fast read/write access to cart data.
+      It requires stable network connectivity to these upstream services and
+      maintains retry logic for transient failures.
+
+      Operational notes: The service runs on a standard microservices
+      infrastructure with automated health checks and monitoring. Cache
+      invalidation follows a time-based eviction policy with manual refresh
+      triggers during product updates. The service uses circuit breaker patterns
+      when communicating with product-api to prevent cascading failures when an
+      upstream dependency is unhealthy.
+
+  - id: kn-cart-cache-overview
+    service_id: cart-cache
+    source: doc
+    source_ref: wiki/checkout/cart-cache
+    title: "cart-cache — cart state cache"
+    body: >-
+      Redis instance used by cart-api to store transient user cart data, keyed by
+      user ID. Data includes item SKUs, quantities, and timestamps. Owned and
+      managed by the checkout team, with access restricted to cart-api and
+      associated backend services. Carts are persisted with a TTL of 7 days from
+      last modification; no data is written to disk. TTL is reset on any cart
+      mutation. No data recovery or backup is performed; expiration is guaranteed
+      after TTL duration regardless of access patterns.
+
+  - id: kn-pricing-api-overview
+    service_id: pricing-api
+    source: doc
+    source_ref: wiki/checkout/pricing-api
+    title: "pricing-api — line & cart price computation"
+    body: >-
+      This service calculates line-item and cart totals during checkout by reading
+      product information from the catalog database. It processes base prices,
+      applies applicable discounts, and returns computed totals to the checkout
+      flow. The service operates synchronously and is a required step in the
+      checkout process.
+
+      The checkout team owns this service and is responsible for its maintenance,
+      monitoring, and performance. The service depends on read access to the
+      catalog database and requires consistent availability to support checkout
+      operations. All cart calculations rely on current catalog data to ensure
+      accurate pricing.
+
+      During normal operation, the service handles approximately 10,000 requests
+      per minute during peak hours. The service maintains a 99.9% success rate for
+      synchronous checkout calls. Response times average 50 milliseconds under
+      normal load conditions. The service does not cache catalog data and always
+      reads fresh information from the database.
+
+  - id: kn-payment-gateway-overview
+    service_id: payment-gateway
+    source: doc
+    source_ref: wiki/payments/payment-gateway
+    title: "payment-gateway — external PSP integration"
+    body: >-
+      Handles card authorization and capture requests to the external payment
+      service provider. Acts as the integration boundary for all payment card
+      transactions, ensuring standardized request/response formatting and retry
+      logic for transient failures. Owned and maintained by the Payments team.
+
+      Depends on the external payment service provider’s availability and SLA;
+      latency is variable and must be accounted for in request timeouts and
+      circuit-breaking logic. No caching is applied; all calls are stateless and
+      idempotent. Monitoring is limited to request success rate, latency
+      percentiles, and error codes; no active alerting on individual transactions.
+
+  - id: kn-kraken-overview
+    service_id: kraken
+    source: doc
+    source_ref: wiki/risk/kraken
+    title: "kraken — risk scoring engine (internal codename)"
+    body: >-
+      Kraken is the internal codename for the transaction risk scoring engine that
+      evaluates checkout transactions in real-time. The service operates as a core
+      component of the payment processing pipeline, providing risk scores for each
+      transaction before authorization is completed.
+
+      The service is owned and operated by the risk engineering team. It receives
+      transaction data from the checkout system and returns a numerical risk score
+      between 0 and 1000, where higher values indicate higher risk. Kraken does
+      not make final risk decisions itself; instead, it provides the scoring
+      signal that is consumed by downstream risk decisioning systems.
+
+      Kraken depends on several upstream data sources including customer profile
+      information, transaction metadata, device fingerprinting data, and
+      historical behavioral patterns. The service also integrates with external
+      fraud detection feeds and maintains internal blacklists and watchlists. All
+      transaction data processed by Kraken is encrypted both in transit and at
+      rest, with access controlled through internal service authentication.
+
+      Operational stability is maintained through automated health checks and
+      monitoring of processing latency. The service runs on a dedicated cluster
+      with horizontal scaling capabilities to handle peak transaction volumes
+      during high-traffic periods. Production deployments follow a standard blue-
+      green deployment strategy with rollback capabilities.
+
+  - id: kn-orders-api-overview
+    service_id: orders-api
+    source: doc
+    source_ref: wiki/orders/orders-api
+    title: "orders-api — order creation & lifecycle"
+    body: >-
+      This service is responsible for creating and managing order records
+      following a successful checkout process. It ensures order data is
+      consistently written to the orders-db and publishes lifecycle events—such as
+      order created, paid, shipped—to the order-events topic for downstream
+      processing. All order state changes are tracked through this service, which
+      maintains data integrity through transactional writes.
+
+      The service is owned by the orders team and depends on the checkout service
+      to trigger order creation, the orders-db for persistent storage, and the
+      order-events Kafka topic for event propagation. It runs in a dedicated
+      cluster with auto-scaling based on request load. The service enforces
+      idempotency on order creation to prevent duplicates during retries.
+
+  - id: kn-orders-db-overview
+    service_id: orders-db
+    source: doc
+    source_ref: wiki/orders/orders-db
+    title: "orders-db — order records datastore"
+    body: >-
+      Postgres primary instance stores all order records and their associated line
+      items for the orders-api service. This database handles all write operations
+      for order creation, updates, and deletions. The primary database is deployed
+      in the same AWS availability zone as the orders-api service for low-latency
+      access.
+
+      The service is owned by the orders team, who are responsible for database
+      schema changes, performance tuning, and monitoring. All orders-api instances
+      connect to this primary database using connection pooling to manage database
+      load. The database uses read-replica instances for reporting queries and
+      backup purposes.
+
+      The primary database is backed up daily to S3 with point-in-time recovery
+      enabled. Backup retention is 30 days with automated restore testing
+      performed weekly. The replica instances are maintained in a separate
+      availability zone for high availability. Database connections are monitored
+      through standard infrastructure monitoring tools with alerts configured for
+      replication lag and query latency thresholds.
+
+  - id: kn-order-events-overview
+    service_id: order-events
+    source: runbook
+    source_ref: runbook/order-events
+    title: "order-events — order lifecycle event stream"
+    body: >-
+      The Kafka topic serves as the primary event channel for order lifecycle
+      updates, including creation, status changes, and fulfillment triggers.
+      Events are produced by the orders-api service and consumed by fulfillment-
+      worker for processing fulfillment workflows and notifications-worker for
+      sending customer alerts. The topic uses a single partition to ensure order
+      consistency across consumers.
+
+      Ownership resides with the orders service team, responsible for schema
+      management, production reliability, and consumer coordination. The topic
+      depends on the availability of the Kafka cluster and the health of both
+      consumer services. Operational focus includes maintaining at-least-once
+      delivery guarantees and monitoring consumer lag, particularly during high-
+      volume periods, to prevent event backlogs and ensure timely processing.
+
+  - id: kn-inventory-api-overview
+    service_id: inventory-api
+    source: doc
+    source_ref: wiki/fulfillment/inventory-api
+    title: "inventory-api — stock levels & reservations"
+    body: >-
+      This service manages stock availability information and processes inventory
+      reservations during the checkout workflow. It provides real-time stock level
+      queries and handles temporary holds on inventory items while customers
+      complete their purchases. The service acts as the authoritative source for
+      available quantities and ensures inventory integrity during transaction
+      processing.
+
+      The service reads from inventory-database for current stock data and inv-
+      cache for optimized performance of frequently accessed inventory items. It
+      writes to inventory-db to update stock levels when reservations are
+      confirmed or released. The service depends on consistent data availability
+      from both inventory-db and inv-cache systems.
+
+      Ownership of the service resides with the fulfillment team, who maintain the
+      service codebase, handle operational issues, and manage capacity planning.
+      The service runs on the standard platform infrastructure with automatic
+      scaling configured for checkout traffic patterns. Operational maintenance
+      includes regular cache warming and database connection pool monitoring.
+
+  - id: kn-inventory-db-overview
+    service_id: inventory-db
+    source: doc
+    source_ref: wiki/fulfillment/inventory-db
+    title: "inventory-db — SKU stock datastore"
+    body: >-
+      The Postgres database serves as the persistent store for per-SKU stock count
+      data consumed by inventory-api. It maintains real-time inventory levels for
+      all SKUs across fulfillment centers, supporting operations like reservation,
+      allocation, and availability checks. Data is written by fulfillment services
+      during receipt, shipment, and adjustment events, and read by inventory-api
+      to serve external clients.
+
+      The database is managed and operated by the fulfillment team. It relies on
+      standard PostgreSQL replication and connection pooling via internal
+      middleware. High-frequency write operations on a small subset of high-
+      velocity SKUs can result in write contention due to row-level locking
+      patterns. This is an inherent characteristic of the workload and does not
+      indicate current degradation.
+
+  - id: kn-inv-cache-overview
+    service_id: inv-cache
+    source: doc
+    source_ref: wiki/fulfillment/inv-cache
+    title: "inv-cache — inventory read cache (abbrev.)"
+    body: >-
+      Redis cache stores current stock quantities for high-traffic products to
+      reduce direct database load. The service maintains real-time inventory
+      counts for items frequently accessed during checkout and browsing. Cache
+      updates occur through database change notifications and periodic syncs.
+
+      Fulfillment team owns the service and is responsible for cache
+      configuration, monitoring, and performance tuning. The system integrates
+      with inventory database via standard connection pools and implements cache
+      invalidation policies. Primary consumers include product detail pages,
+      shopping cart, and checkout workflows.
+
+      Dependencies include inventory database for source data, Redis cluster for
+      caching infrastructure, and fulfillment microservices for cache update
+      triggers. Service requires consistent network connectivity to database and
+      Redis cluster. Cache invalidation relies on database transaction logs and
+      manual override capabilities.
+
+      Operational notes: Cache latency targets are 10ms for reads, with 99th
+      percentile under 50ms. Cache hit ratio must maintain above 95% to justify
+      infrastructure costs. Cache entries expire after 30 seconds of inactivity to
+      balance freshness with performance. Monitoring tracks cache miss rates and
+      database query volume to detect staleness issues.
+
+  - id: kn-notifications-worker-overview
+    service_id: notifications-worker
+    source: doc
+    source_ref: wiki/messaging/notifications-worker
+    title: "notifications-worker — transactional email/SMS/push"
+    body: >-
+      The background worker processes order-events from the event stream to
+      trigger transactional notifications, including order confirmation and
+      shipping update messages. It operates asynchronously and is not involved in
+      the synchronous checkout flow, ensuring checkout latency remains unaffected.
+      The service runs in a dedicated worker pool with retry logic for transient
+      failures, but does not guarantee delivery in real time.
+
+      Owned and maintained by the messaging team, the service depends on the order
+      event stream and downstream notification services (email, SMS gateways). It
+      uses a dead-letter queue for failed message processing and is monitored via
+      standard metrics (throughput, error rate, latency) in the platform’s central
+      observability stack. No direct user-facing impact is expected during
+      degradation.
+
+  - id: kn-analytics-tap-overview
+    service_id: analytics-tap
+    source: doc
+    source_ref: wiki/data/analytics-tap
+    title: "analytics-tap — passive event side-tap"
+    body: >-
+      This service mirrors event streams from the primary transaction system into
+      the data warehouse for analytics purposes. It operates as a passive consumer
+      of event data, maintaining no direct impact on customer-facing operations or
+      request processing. The service processes events in near real-time, with a
+      typical latency of 5-10 minutes between event generation and warehouse
+      availability.
+
+      The service is owned and operated by the data engineering team. It depends
+      on the event streaming platform for data ingestion and the data warehouse
+      infrastructure for storage and query access. This service requires no
+      explicit coordination with application services during normal operation.
+
+      Operational stability relies on monitoring of event lag and warehouse write
+      performance. The service runs continuously in a dedicated cluster with
+      automatic failover. Recovery from transient failures typically resolves
+      within 15 minutes without manual intervention.
+
+  - id: kn-web-gateway-routing
+    service_id: web-gateway
+    source: runbook
+    source_ref: runbook/web-gateway-routing
+    title: "web-gateway — routing, rate limits & TLS"
+    body: >-
+      The edge gateway routes incoming HTTP(S) traffic to the storefront-bff and
+      auth-api services based on path and host headers. Route maps are defined in
+      the platform's central configuration repository and deployed via automated
+      CI/CD pipelines. Each route enforces per-route rate limiting using fixed-
+      window counters, with thresholds configured at the route level and enforced
+      at the gateway ingress layer. TLS termination occurs at the edge gateway;
+      upstream services receive traffic over HTTP. All certificates are managed
+      through platform's centralized secrets system and rotated on a 90-day cycle.
+      Configuration is versioned and validated against schema before deployment.
+
+  - id: kn-search-api-pipeline
+    service_id: search-api
+    source: doc
+    source_ref: wiki/discovery/search-api-pipeline
+    title: "search-api — index build & query pipeline"
+    body: >-
+      The search-api service handles product search queries by routing requests to
+      a search index that is rebuilt each night from data in catalog-db. The
+      rebuild process runs as a scheduled batch job that extracts product
+      information, processes it through the search indexer, and deploys the
+      updated index to the query service. This ensures search results reflect the
+      latest catalog data while maintaining query performance.
+
+      The service operates with a simple query path: incoming search requests are
+      directed to the search index, which returns ranked results based on
+      configured scoring algorithms. The index is designed for read-heavy
+      workloads with minimal write operations during the nightly rebuild window.
+      All query processing occurs within the search-api service boundaries, which
+      maintains its own internal cache layers for frequently accessed data.
+
+      The build job runs at 2 AM daily and takes approximately 45 minutes to
+      complete. It requires exclusive access to the catalog-db read replicas
+      during the extraction phase and must complete before the index becomes
+      available for queries. The search-api service itself has no external
+      dependencies beyond the catalog-db read replicas and the search index
+      storage layer. All operational monitoring occurs through the standard
+      service metrics and index health checks.
+
+  - id: kn-fraud-check-overview
+    service_id: fraud-check
+    source: doc
+    source_ref: wiki/risk/fraud-check
+    title: "fraud-check — synchronous fraud screen"
+    body: >-
+      The synchronous fraud screen evaluates transactions in real time during
+      checkout by querying Kraken for a risk score and applying predefined rules
+      to determine whether to approve, reject, or flag the transaction. This
+      service runs as a blocking step in the checkout flow and is responsible for
+      mitigating fraud risk at the point of purchase. It is owned and maintained
+      by the risk engineering team.
+
+      The service introduces measurable latency to the checkout process due to its
+      synchronous nature and dependency on external services, particularly Kraken.
+      While the latency is generally within acceptable thresholds, it is a known
+      factor in checkout performance and is monitored as part of system stability
+      reporting. The service operates under standard availability SLAs and is
+      configured with retry logic and circuit breaking to handle transient
+      failures in downstream dependencies.
+
+  - id: kn-catalog-db-overview
+    service_id: catalog-db
+    source: doc
+    source_ref: wiki/catalog/catalog-db
+    title: "catalog-db — product catalog datastore"
+    body: >-
+      Postgres primary instance serves as the authoritative data store for the
+      product catalog, providing read and write access for catalog-related
+      operations. The database is accessed by multiple downstream services
+      including product-api, search-api, and pricing-api, which perform read
+      operations against the primary for catalog data.
+
+      The service is owned by the catalog team, responsible for database schema
+      changes, performance tuning, and operational maintenance. All read
+      operations from the catalog services are executed against the primary
+      instance, with no read replicas currently configured for catalog data
+      access.
+
+      Operational considerations include statement timeout configurations to
+      prevent long-running queries from impacting database performance. The
+      primary instance is configured with appropriate timeout values to handle
+      catalog queries while maintaining system stability. No read replicas are
+      currently deployed for the catalog database, and all read traffic is routed
+      to the single primary instance.
+
+  - id: kn-user-db-overview
+    service_id: user-db
+    source: doc
+    source_ref: wiki/identity/user-db
+    title: "user-db — accounts & credentials datastore"
+    body: >-
+      The user-db service stores user account metadata, hashed password
+      credentials, profile information (name, email, preferences), and
+      authentication-related state. Data is persisted in a Postgres primary with
+      read replicas used for query offloading, and encrypted at rest via the
+      platform key-management system.
+
+      Ownership: the identity team; primary on-call is identity-ops. Read replicas
+      are used exclusively for reporting and analytics workloads, never for
+      transactional writes.
+
+      Operational note: daily incremental backups are retained for 14 days with
+      weekly full backups. Credential fields are never logged.
+
+  - id: kn-fulfillment-worker-overview
+    service_id: fulfillment-worker
+    source: doc
+    source_ref: wiki/fulfillment/fulfillment-worker
+    title: "fulfillment-worker — inventory reservation & dispatch"
+    body: >-
+      The fulfillment-worker is a background worker that reserves inventory and
+      creates fulfillment tasks when orders are placed. It consumes order events
+      from the messaging system and coordinates the inventory holds needed for an
+      order to ship.
+
+      Owned by the fulfillment team, which runs the end-to-end fulfillment
+      pipeline: inventory management, task dispatch, and coordination with
+      shipping systems.
+
+      Operational note: failed reservation attempts are retried with exponential
+      backoff up to five times before the task is parked on a dead-letter queue
+      for manual review.
