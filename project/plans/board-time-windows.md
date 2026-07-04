@@ -20,7 +20,7 @@ spine**: an explicit, pivotable sequence of the instants that matter.
   moments that matter — deploy → onset → saturation — pivot between them.* That
   structure is latent in the data today and lives only in the responder's head.
 - A window becomes an addressable object — `@`-referenceable in the document
-  ("by `@win:saturation` the pool was exhausted"), the way typed finding-ids
+  ("by `@t:saturation` the pool was exhausted"), the way typed finding-ids
   anchor facts. The narrative gains **time anchors**.
 - Makes synchronized hover nearly free: the selected window *is* the shared time
   domain the cross-chart cursor needed. Locked charts + one domain → the cursor
@@ -43,6 +43,18 @@ it can't be a lone drop-down — it has to integrate cleanly with search (drag-s
 range?), the evidence drawer, and the narrative account as one coherent time gesture.
 Out of scope here; named, not forgotten.
 
+**Windows are `@`-markable; double-cite when the window is load-bearing.** A window is
+a first-class citeable object in the document — prefix **`t:`** (time), *colon*-
+separated to match the existing id grammar (`an:` / `ch:` / `tr:`), **not** dotted:
+`@t:first-sign-of-trouble`. When a claim's truth depends on *when* you look, compose
+the two refs: *"`@ch:web-gateway:latency` at `@t:first-sign-of-trouble`."* This is how
+citation stays grounded under re-derivation (decision 2): a bare `@ch:` is window-
+*relative by design* — it renders at the current selection — and binding it to a `@t:`
+pins the moment the claim was true. The **author** carries that judgment: bind the
+window when it matters, leave it bare when it doesn't — consistent with the human
+owning synthesis. This promotes the doc→window pivot from "open question" to
+**needed**: clicking a `@t:` ref selects that window, which re-scopes the charts.
+
 ### 2. Charts re-derive against the selected window (path a) — not scene-swapped (path b).
 
 Picking a window re-runs each time-scoped chart bound to that window, so *the same
@@ -59,33 +71,40 @@ act of selecting a window**, *not* on the 2 s board poll — so arbitrary SQL st
 never rides the poll hot path, which was the whole reason for the snapshot rule. That
 invariant holds.
 
-### 2a. The thing (a) forces: "any SQL at runtime" bends toward a predictable frame.
+### 2a. The frame contract, simplified by chopping: every chart is a time-series.
 
-To re-derive a chart for a new window, the runtime must know *how* the window
-applies. So the beautiful "Claude writes literally any SQL" reach narrows — not to a
-query language (**no PromQL parser**, explicitly), but to a **shape contract**,
-something stupider:
+Re-deriving a chart for a new window means the runtime must know *how* the window
+applies. Rather than handle the awkward cases with cleverness, we **chop** them
+(resolved 2026-07-04). The contract is uniform and **mandatory** — no per-chart
+opt-out, so every chart responds to the drop-down predictably (no "why didn't *this*
+one move?"):
 
-- **Time-series charts declare their time/x column** (extends the render spec we
-  already carry — `xColumn`). Windowing is then an outer-wrap-and-clip the runtime
-  applies, never a rewrite of the agent's query:
-  `SELECT * FROM (<agent sql>) WHERE <xCol> BETWEEN :from AND :to`.
-  Good enough for already-bucketed series — you get the in-window points.
-- **Aggregate-over-range charts** (e.g. bar: "avg p99 by service") can't be clipped —
-  the window must push *into* the aggregation, which needs the agent to place a
-  `:from`/`:to` binding in its own `WHERE`.
-- **Charts that do neither are window-invariant** — shown unchanged, or dimmed as
-  "not time-scoped."
+- **x is always time.** No categorical-x charts. Categorical data moves from the
+  *axis* to *series* — "avg p99 by service" becomes "p99 over time, one line per
+  service" — which is usually the better incident viz anyway (trajectory + onset, not
+  just a magnitude ranking).
+- **Windowing rides the Grafana macro idiom, not a bespoke convention.** Every chart's
+  SQL uses `$__timeFilter(ts)` / `$__timeGroup(ts, interval)`; the sandbox expands
+  them against the selected window at exec time. This is a syntax Claude already knows
+  cold (see "Prior art"), and it covers both the plain filter and the bucketed-
+  aggregate cases with no special-casing.
+- **No time axis ⇒ not authorable (for now).** A chart that can't put time on x simply
+  can't be made until the deferred **stacked / grouped-bar** work — which is *still*
+  time-x (time buckets on x, category as the stack), so it's a render mode, not an
+  axis-model exception. The categorical "L" is smaller than it looks: you lose
+  categorical *axes*, not categorical *data*.
 
-The drift to name plainly: we trade *unlimited* SQL for *windowable* SQL — a declared
-time axis and/or a `:from/:to` binding. Stupid, not a DSL. **Whether the frame
-contract is worth the reach is the primary design risk** (below), and it's the likely
-forcing function that pulls the deferred canonical view catalog forward.
+This retires the earlier "declare a time column / outer-wrap-and-clip / window-
+invariant" trichotomy — there is now **one shape**, which is what makes "every viz
+must accept a time window" enforceable instead of a nest of strategies.
 
-> **Don't invent the mechanism — adopt Grafana's.** See "Prior art" below: the
-> clip-vs-pushdown split *is* Grafana's `$__timeFilter` / `$__timeGroup`, and the
-> "declare the time column" step *is* Superset's `is_dttm`. Use the established macro
-> idiom, not a bespoke outer-wrap convention.
+**Consequence, recorded honestly:** this **deprecates the categorical bar shipped in
+`agent-sql-charts.md`** (the demoed "p99 by service" bar). Not removed today — but
+under this design new charts are time-x only, and that bar becomes legacy/deferred.
+
+> **The mechanism is Grafana's, not ours.** See "Prior art": `$__timeFilter` /
+> `$__timeGroup` is the decade-old idiom; borrow it whole. The residual risk isn't the
+> mechanism, it's blast radius — but chopping to time-x-only *is* the mitigation.
 
 ### 3. Windows are seeded explicitly and kept few — an AI-curation discipline.
 
@@ -97,12 +116,32 @@ earns its place only by being a pivot the investigation actually turns on. This 
 same rule as the board itself (`weaver-board-is-model-not-history`): windows are the
 moments that matter *now*, pruned like any stale line — not accreted as history.
 
+### 4. Liveness reversal for charts — accepted with eyes open.
+
+Adopting the Grafana macro idiom means adopting its **live semantics** for charts: a
+chart's truth is "as of the selected window," re-run on selection. That is a
+deliberate reversal of the snapshot promise *for charts* — the snapshot demotes to a
+default-window cache. Every *other* evidence kind stays snapshot. Citation stability is
+recovered not by immutability but by **double-citing** (decision 1) — a claim that
+depends on the moment names its `@t:` window.
+
+### 5. Under-engineer the backend for the demo — lean on the hardware.
+
+The re-derive cost (N charts × a sandbox exec per pivot, worst under rapid
+window-scrubbing) is **explicitly punted** for the demo. A monster box — FLOPs,
+64 GB RAM, M.2 SSD — against a hella-smol dataset absorbs re-exec-per-pivot with no
+cache tier and no debounce cleverness. The honest caveat: `(chart, window)` caching +
+invalidation becomes real the day telemetry actually ingests (data stops being
+immutable). A `demo-vs-production.md` line, not a today problem.
+
 ## The window, as an entity
 
 A tracked board element:
 
-- **typed id** `win:<...>` — `@`-referenceable in the document.
-- a **label** — "onset", "saturation", "the leak".
+- **typed id** `t:<label>` — `@`-markable in the document. Prefix `t:` (time), chosen
+  over `win:` — shorter for something cited often in prose. **Colon**-separated, like
+  every other id; not dotted.
+- a **label** — "onset", "saturation", "the leak" — is the id body (`t:onset`).
 - a **range** `[from, to]` — a *moment* is a narrow/padded span, a *span* is a wide
   one. One shape, not two kinds.
 - optional **grounding** — the evidence/event it was seeded from (an onset ts, a
@@ -124,7 +163,7 @@ A single selected window can't show a slow-burn trend (mem leak, hours) and an a
 spike (crash, seconds) *at the same time* — different timescales want different
 windows. We accept it: you **pivot** between the leak-span and the crash-moment rather
 than juxtaposing them. The story that spans both — "the leak caused the crash" — is
-told in the **document's prose**, grounded by `@win:leak` and `@win:crash`, not forced
+told in the **document's prose**, grounded by `@t:leak` and `@t:crash`, not forced
 onto one axis. Simultaneous multi-timescale display is a non-goal.
 
 ## Prior art — the data model is a known pattern, not a hack
@@ -167,22 +206,25 @@ domain participate in the shared window/cursor" isn't a weaver compromise; it's 
 even grammar-of-graphics hits. Heterogeneous x-axes can't be synchronized by anyone.
 Scope to a normalized time domain and stop worrying about it.
 
-## Open questions / design risks
+## Resolved 2026-07-04 (was: open risks)
 
-- **The frame contract's blast radius (the real risk).** How much agent-SQL freedom
-  does "declare a time column / bind `:from:to`" actually cost? If the useful charts
-  are mostly simple time-series, cheap. If the agent routinely wants windowed
-  aggregates, we're pushed toward the view catalog sooner. Needs a survey of the
-  shapes the agent actually authors.
-- **Re-derive latency & caching.** Selecting a window re-execs N charts through the
-  sandbox; cache per `(chart, window)`. Felt latency pivoting between two windows on a
-  ten-chart board? Likely fine (interaction, not poll) — unmeasured.
+- **Frame-contract blast radius** → resolved by *chopping* to time-x-only + mandatory
+  windowing (2a). One shape, so there's no trichotomy to size. The categorical case is
+  deferred to stacked/grouped-bars (still time-x).
+- **Citation stability under re-derivation** → resolved by making windows `@t:`-markable
+  and double-citing (`@ch:… at @t:…`, decision 1). A bare chart-cite is window-relative
+  by design.
+- **Re-derive latency & caching** → punted for the demo; hardware absorbs it (decision
+  5). A real concern only once telemetry ingests.
+- **Doc → window pivot** → promoted from "maybe later" to **needed** (decision 1): a
+  `@t:` click selects the window.
+
+## Still open
+
 - **Non-chart evidence under a window.** Do logs / anomaly / trace cards also re-scope
   to the selected window (the full "dossier around a moment"), or charts-only in v1?
   Charts-only is the cheap start; the whole-dossier version is the bigger prize *and*
-  the bigger cost.
-- **Doc → window pivot.** Clicking an `@win:` reference in the document could *select*
-  that window — a lovely pivot affordance. Likely later; noted.
+  the bigger cost. **The one genuinely-undecided design question.**
 - **Human authoring.** The deferred hard problem: a human time gesture integrated
   across search + evidence drawer + narrative. Not a drop-down.
 
