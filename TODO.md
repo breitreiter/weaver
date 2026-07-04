@@ -42,33 +42,47 @@ is co-built by human *and* Claude.
       the read-only telemetry; no schema change. Each search result carries its
       `pin` (node + evidence), so it drops straight onto the refactored board.
 
-### Chart wall — temporal viz off the search results
+### Charts — agent-authored SQL charts (superseded the chart wall)
 
-See `project/plans/chart-wall.md`. An "add to chart wall" button drops a
-time-series chart into a **peer panel of the board** (not a fixed chart above
-results). Granularity differs by scope: **metrics** per-card, **logs / traces /
-changes** per-result-set, **anomalies** per-result-set (event lollipops),
-**services** no button (no timestamp). One chart component, three layer modes
-(volume bars / value lines / event lollipops) on the shared window x-axis.
+The human "add to chart wall" builder (`chart-wall.md`) was **superseded by
+agent-authored SQL charts** (`agent-sql-charts.md`): Claude writes read-only SQL,
+snapshots the result, pins it as `chart` evidence — Recharts in the web, a prose
+table in the CLI. Charting decisions locked in `board-time-windows.md`.
 
-- [x] **Honest result counts in the UI** — results are "top 60 sorted by
-      duration / recency / magnitude," *not* "there happen to be exactly 60."
-      Header now shows "top 60 by {duration|recency|magnitude|time|name} — more
-      exist" when the cap is hit, and a plain count otherwise (`Workbench.tsx`,
-      labels mirror the backend ORDER BY per scope). Also the reason the chart
-      wall needs a real histogram endpoint rather than binning the capped page.
+Built (2026-07):
+
+- [x] **Hardened read-only SQL sandbox + `/api/charts/exec`** — single-SELECT,
+      `Mode=ReadOnly`, native progress-handler wall-clock cancel, row cap (24 tests).
+- [x] **`chart` evidence kind + `ch:` typed id**, end to end (entity → DTO →
+      resolve → `IsTypedId`). A chart is *authored*, not resolved from telemetry.
+- [x] **`weaver chart` CLI verb** — prose table + the `ch:` id; `--pin <service>`
+      snapshots it onto the board.
+- [x] **Recharts renderer** for pinned chart evidence + `MetricSparkline` re-skinned
+      onto Recharts (one styling surface); sparkline hover tooltip.
+- [x] **Honest result counts in the UI** — "top 60 by {duration|recency|magnitude|
+      time|name} — more exist" when capped, else a plain count (`Workbench.tsx`).
 - [x] **Backend histogram endpoint** (`/api/search/histogram`) — bucketed counts
-      over the *full* matching set (not the capped page), same filters as
-      `/api/search` (logs|traces|changes). Auto-snaps to a nice bucket (~60/window)
-      or takes `bucketMs`; returns `{scope, window, bucketMs, total, buckets[]}`
-      with epoch-ms + ISO per bucket. `HistogramDto` in Contracts. Verified
-      against the dataset (logs total = 12,670, not capped). Unblocks volume charts.
-- [ ] **Chart component** — x = window, three layer modes.
-- [ ] **"Add to chart wall" affordances** + the **chart wall panel** (peer of
-      the board; dismissable/reorderable). Wall state in the URL so the agent
-      can drive it (`weaver-ui-rules`).
-- [ ] **Metric series on add** — metric search payload carries no points; fetch
-      via `/api/metrics` on add, or widen the payload.
+      over the *full* matching set (not the capped page); `HistogramDto`. **Backs the
+      count-bar shape.**
+
+Charting decisions (locked — `board-time-windows.md` §2a/2b):
+
+- **Every chart is time-x.** No categorical x-axis; categorical data becomes
+  *series*, not the axis.
+- **Canonical render set: `line` + `count-bar`** (PerfStack-derived). `area` = a
+  `line` fill. **`scatter` is CUT** (numeric×numeric, no time axis). Claude picks
+  the render spec from query shape + intent — no chart-type menu (the design stance).
+- **Deferred shapes:** `state-line` (alert/status — needs a live-derived state
+  series, since weaver stores no status), `stacked`/`grouped bar`, `heat-line`.
+
+Follow-ups:
+
+- [ ] **Retire the shipped `scatter` (+ categorical bar) render types** to match the
+      time-x-only decision. (Currently `weaver chart --type` still accepts them.)
+- [ ] **Board time windows** — a tracked set of named `t:` windows; charts lock to
+      the selected one (re-derive via the Grafana `$__timeFilter`/`$__timeGroup`
+      idiom); the window is the shared time domain that unlocks synchronized hover.
+      **Design complete, not built** — see `board-time-windows.md`.
 
 ## CLI ↔ UI alignment (the co-researcher lift)
 
