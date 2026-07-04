@@ -218,15 +218,50 @@ Scope to a normalized time domain and stop worrying about it.
   5). A real concern only once telemetry ingests.
 - **Doc → window pivot** → promoted from "maybe later" to **needed** (decision 1): a
   `@t:` click selects the window.
+- **Non-chart evidence does NOT scope to the window** (resolved 2026-07-04). Only
+  charts re-derive. This draws a clean conceptual line: **charts are *continuous*
+  series — a window is a lens over them; instant events (logs / anomalies / traces /
+  changes) are *discrete facts* — they either fall inside a window or they don't, and
+  nothing about them "re-derives."** Future escape hatch (not a blocker): cross-link
+  instant events to the windows they fall within — pure display/annotation
+  (highlight the pins inside the selection), never re-execution. Keeps the snapshot
+  model intact for everything that isn't a chart.
 
 ## Still open
 
-- **Non-chart evidence under a window.** Do logs / anomaly / trace cards also re-scope
-  to the selected window (the full "dossier around a moment"), or charts-only in v1?
-  Charts-only is the cheap start; the whole-dossier version is the bigger prize *and*
-  the bigger cost. **The one genuinely-undecided design question.**
-- **Human authoring.** The deferred hard problem: a human time gesture integrated
-  across search + evidence drawer + narrative. Not a drop-down.
+- **Human authoring.** The one deferred hard problem — a human time gesture integrated
+  across search + evidence drawer + narrative. Not a drop-down. Unpacked below.
+
+## The deferred human-authoring problem (why it's hard, not just unbuilt)
+
+For the demo, Claude authors windows (like charts) and the human curates by selecting
+/ pruning. A real *human* create-a-window affordance is deferred because it isn't one
+missing button — it's genuinely cross-cutting:
+
+- **A window needs two things at once that no single control captures: a *range* (two
+  timestamps) and a *grounding* (the fact that makes the moment meaningful).** Claude
+  does both in one reasoning step — reads an onset, decides the span, names it, links
+  the evidence. A human clicking has to find the moment, set *both* boundaries, name
+  it, and ideally tie it to a fact — a multi-step gesture with no natural single home.
+- **The three surfaces that each have a claim only hold half of it.** *Search* has the
+  timestamps but no time axis to brush on (it's a list). The *evidence drawer* owns the
+  selected window but not the motivating data. The *document* can cite `@t:` windows but
+  can't define a time range from a text cursor. A good affordance has to stitch one
+  coherent "select a span, name it, ground it" gesture across all three — or crown one
+  as canonical and route the rest to it.
+- **Chicken-and-egg.** The gesture that would make it natural — *brush-select on a
+  shared time axis* — only exists *because* this feature introduces the shared axis. So
+  human-authoring is downstream of the very thing being built.
+- **Restraint doesn't come for free.** Claude keeps windows few and meaningful by
+  judgment (decision 3). A "new window" button invites the 20-junk-windows mess that
+  decision 3 exists to prevent; a human UI would have to actively encourage
+  few-good-windows.
+
+**The likely reframe when it's picked up:** the human's real action is probably
+*curation, not authoring* — rename / delete / nudge-the-boundaries on Claude's seeded
+windows (a light edit) rather than net-new creation from scratch (heavy). That fits
+weaver's human-drives-Claude-multiplies grain and shrinks the UI problem
+considerably. Worth trying that framing before building a full authoring surface.
 
 ## Relationship to sibling threads
 
