@@ -104,6 +104,7 @@
 .badge-trace { background: #9d7cd8; }
 .badge-metric { background: #56b6c2; }
 .badge-change { background: #e06c9f; }
+.badge-knowledge { background: #9ece6a; }
 
 .pin { display: inline-flex; align-items: center; justify-content: center; padding: 0;
   width: 30px; height: 28px; background: var(--panel); border: 1px solid var(--border);
@@ -176,6 +177,7 @@ button.hop-svc:hover { color: var(--text-h); text-decoration: underline; }
 .ev-item.kind-metric { --k: #56b6c2; }
 .ev-item.kind-change { --k: #e06c9f; }
 .ev-item.kind-chart { --k: #3987e5; }
+.ev-item.kind-knowledge { --k: #9ece6a; }
 .ev-item-ico { color: var(--k, var(--text-dim)); margin-top: 1px; flex-shrink: 0; }
 .ev-item-body { min-width: 0; flex: 1; }
 .ev-item-label { color: var(--text); font-size: 12px; }
