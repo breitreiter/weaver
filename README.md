@@ -12,6 +12,10 @@ post-incident review once it's out, a design note when nothing's on fire. You an
 Claude (or Cursor, or whatever you use) work the same document together — one as
 the writer of record, one as the tireless forager and drafting partner.
 
+![weaver working a flash-sale checkout incident: the forage rail on the left, the co-edited RCA document in the centre with every claim carrying a live `@`-reference, and the pinned-evidence rail on the right headed by the traffic-surge chart.](docs/flash-sale-rca-hero.png)
+
+<p align="center"><em>A flash-sale checkout RCA in progress — foraged, pinned, and written up against the evidence: the connection pool saturated under surge traffic, and every line points back at the finding that grounds it.</em></p>
+
 > **Maturity, honestly.** This is an **interface concept / prototype**, not a
 > production observability tool. It does not ingest your real telemetry, connect
 > to OpenTelemetry collectors, scale, or persist anything you'd trust on call. It
