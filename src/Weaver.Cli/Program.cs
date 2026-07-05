@@ -12,6 +12,7 @@ using Weaver.Core;
 var argv = new ArgParser(args);
 var verb = argv.Verb;
 var api = new Api(Environment.GetEnvironmentVariable("WEAVER_API") ?? "http://localhost:5180");
+var web = Environment.GetEnvironmentVariable("WEAVER_WEB") ?? "http://localhost:5173";
 FacetsDto? facetsCache = null;  // lazily fetched for time/did-you-mean resolution
 
 // the six search scopes + their sort labels, mirroring the UI's left panel.
@@ -482,7 +483,6 @@ string SearchQuery(string scope, int limit)
 // --- the board (pins + the co-edited document) ----------------------------
 void Board()
 {
-    var web = Environment.GetEnvironmentVariable("WEAVER_WEB") ?? "http://localhost:5173";
     var sub = argv.Pos.Count > 0 ? argv.Pos[0] : "show";
 
     if (sub == "new")
@@ -490,7 +490,7 @@ void Board()
         var title = string.Join(" ", argv.Pos.Skip(1));
         var c = api.Post<CreatedDto>("/api/boards", new { title = string.IsNullOrWhiteSpace(title) ? null : title });
         Console.WriteLine($"board {c.Id} created");
-        Console.WriteLine($"open: {web}{c.Url}");
+        PrintBoardView(c.Id);
         Console.WriteLine($"tip:  export WEAVER_BOARD={c.Id}   (so pin/doc target it)");
         return;
     }
@@ -517,7 +517,7 @@ void Board()
 
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
     Console.WriteLine($"board {b.Id}: {b.Title}  ({b.Nodes.Count} service{(b.Nodes.Count == 1 ? "" : "s")})");
-    Console.WriteLine($"open: {web}/view?board={b.Id}");
+    PrintBoardView(b.Id);
     Console.WriteLine("services:");
     foreach (var n in b.Nodes)
     {
@@ -698,6 +698,7 @@ void Doc()
         var b = api.Get<BoardDto>($"/api/boards/{ResolveBoard(posIndex: 1)}");
         if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
         Console.WriteLine($"# doc — board {b.Id} (v{b.DocVersion})");
+        PrintBoardView(b.Id);
         Console.WriteLine(string.IsNullOrEmpty(b.Doc) ? "(empty — nothing written yet)" : b.Doc);
         SaveDocBaseline(b.Id, b.DocVersion, b.Doc);   // reading sets my reference point
         return;
@@ -919,6 +920,15 @@ static string Unit(string metric) => metric switch
 static string Clock(string iso) => DateTimeOffset.TryParse(iso, out var d) ? d.ToString("HH:mm:ss") : iso;
 
 void Hint(params string[] next) => Console.WriteLine("next: " + string.Join("\n      ", next));
+
+// The board's human-facing side: the web view of the artifact you're co-authoring.
+// A bare URL is easy to lose in tool output, so this frames it as something to hand
+// the human — surface the link in a message so they can watch the board fill in.
+void PrintBoardView(string id)
+{
+    Console.WriteLine($"view: {web}/view?board={id}");
+    Console.WriteLine("      ↳ the human's live view of this board — paste them this link so they can follow along");
+}
 
 // The local, per-board record of the doc state this CLI last saw (see doc changes).
 record DocBaseline(int Version, string Text);
