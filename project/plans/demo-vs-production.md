@@ -188,10 +188,41 @@ scale while the architecture stays honest about the real world.
 
 ---
 
+## Doc catch-up: a single-writer baseline, not multi-writer attribution
+
+- **The big-hammer temptation:** full authorship on the co-edited document —
+  every edit tagged by who made it (the human vs. each agent), a server-side
+  revision log, and per-writer catch-up so any participant can ask "what did
+  *everyone else* change since I last looked?" CRDT/OT-grade handling of many
+  concurrent writers, politely reconciled.
+- **Demo choice:** `weaver doc changes` keeps a **client-side baseline** — the
+  last doc text this CLI saw for a board (advanced on every show/edit/append) —
+  and diffs the live doc against it. "What the human changed" is simply "what
+  moved that I didn't write." No authorship is stored; the version-checked 3-way
+  merge on write (`DocMerge`) already covers the one-human/one-agent concurrency
+  we actually have.
+- **Why it's right here:** the demo is exactly one human and one agent on a
+  board. With a single *other* writer, "not me" **is** "the human" — attribution
+  comes for free, with no schema, no author plumbing through the web UI, and no
+  server state. The signal that matters (the human sharpening a tentative read,
+  crossing out a dead end, dropping in the out-of-band tie-break the telemetry
+  never held) lands with zero infrastructure. Storing attributed revisions to
+  tell writers apart would be building for a crowd that isn't in the room.
+- **IRL / the seam:** the moment a board has a second human *or* a second agent,
+  "not me" stops resolving to one person, and the client-side baseline can't say
+  *who* moved a line. Then you promote to **server-side attribution** — tag each
+  doc PUT with its author, keep a revision log, and offer per-writer catch-up
+  (multi-human **and** multi-agent diff). Same `doc changes` surface, same hunk
+  rendering; only the baseline's provenance hardens from a local snapshot into an
+  attributed server log. In a perfect world we'd handle many writers gracefully
+  from day one — it's just overkill for a single-human / single-agent demo.
+
+---
+
 ## A different kind of "no"
 
 Not every omission is a scaling tradeoff. **Auth, users, billing, and any
-screen beyond the single graph view** are *product* non-goals — out of
+screen beyond the single board view** are *product* non-goals — out of
 scope by design, not infrastructure we'd swap in at scale. Those live in
 the constitution's Non-goals, and the honest answer there is just "yes,
 obviously, in a real product" — they simply aren't what this demonstrates.

@@ -27,7 +27,7 @@ try
 {
     switch (verb)
     {
-        case "graph": Graph(); break;
+        case "overview": Overview(); break;
         case "service": Service(); break;
         case "metrics": Metrics(); break;
         case "logs": Logs(); break;
@@ -63,6 +63,8 @@ void Help()
         weaver — investigate a service graph from observed telemetry
 
         forage (the same lens the UI's left panel uses)
+          overview                      the fleet at a glance: services by
+                                          subsystem + service/dep/route counts
           search <scope> [facets]       the unified query: anomalies | traces |
                                           logs | services | metrics | changes |
                                           knowledge. every row prints a typed id.
@@ -95,6 +97,8 @@ void Help()
           unpin <evidence-id>           drop one finding
           unpin <service> --all         remove a service and its evidence
           doc show [id|url]             print the co-edited document (+ version)
+          doc changes [--peek]          what the human edited since you last
+                                          looked (diff vs your last-seen baseline)
           doc edit --find "x" --replace "y"  anchored find/replace — re-anchors on
                                           a concurrent edit, never blind offsets
           doc append "text"             add text to the end of the document
@@ -108,7 +112,7 @@ void Help()
         """);
 }
 
-void Graph()
+void Overview()
 {
     var g = api.Get<GraphDto>("/api/graph");
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
@@ -312,7 +316,7 @@ void Anomalies()
     var qs = AnalysisQuery("/api/anomalies");
     var a = api.Get<List<AnomalyDto>>(qs);
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
-    if (a.Count == 0) { Console.WriteLine("no anomalies vs base — the system looks calm."); Hint("weaver timeline", "weaver graph"); return; }
+    if (a.Count == 0) { Console.WriteLine("no anomalies vs base — the system looks calm."); Hint("weaver timeline", "weaver overview"); return; }
 
     Console.WriteLine($"{a.Count} signal(s) moved vs base (unranked — cause and collateral mixed):");
     Console.WriteLine($"  {"subject",-18} {"metric",-14} {"delta",8}  {"z",5}  onset");
@@ -327,7 +331,7 @@ void Timeline()
     var qs = AnalysisQuery("/api/timeline");
     var t = api.Get<List<TimelineEntryDto>>(qs);
     if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
-    if (t.Count == 0) { Console.WriteLine("no anomalies to order — the system looks calm."); Hint("weaver graph"); return; }
+    if (t.Count == 0) { Console.WriteLine("no anomalies to order — the system looks calm."); Hint("weaver overview"); return; }
 
     Console.WriteLine($"onset order ({t.Count} services moved) — earliest first; precedence, not causation:");
     foreach (var e in t)
@@ -401,13 +405,13 @@ void Relationships()
     if (r.Relationships.Count == 0)
     {
         Console.WriteLine($"no recorded relationship between {a} and {b} — a link here is your own assertion.");
-        Hint($"weaver link {a} {b} --as \"explains\"   (draw it as a hypothesis)");
+        Hint($"weaver doc append \"{a} → {b}: <your hypothesis>\"   (assert it in the doc — flag it as unproven)");
         return;
     }
     Console.WriteLine($"{r.Relationships.Count} fact(s) between {a} and {b} (enumerated, not ranked):");
     foreach (var rel in r.Relationships)
         Console.WriteLine($"  [{rel.Group,-10}] {rel.From} -> {rel.To}  {rel.Title}\n      {rel.Detail}");
-    Hint($"weaver link {r.Relationships[0].From} {r.Relationships[0].To} --as \"{r.Relationships[0].SuggestedLabel}\"");
+    Hint($"weaver doc append \"{r.Relationships[0].From} → {r.Relationships[0].To}: {r.Relationships[0].SuggestedLabel} (grounded above)\"");
 }
 
 void NodeEvidence()
@@ -545,7 +549,7 @@ void Pin()
             new { serviceIds = r.Pin.NodeIds, evidence = r.Pin.Evidence, label = r.Title });
         var where = r.Pin.NodeIds.Count > 1 ? $"{r.Pin.NodeIds.Count} services" : r.Pin.NodeIds.FirstOrDefault() ?? "(fleet)";
         Console.WriteLine($"pinned {r.Type}: {r.Title}  → {where}");
-        Hint("weaver board show", "weaver link <a> <b> --as \"explains\"");
+        Hint("weaver board show", $"weaver doc append \"… @{arg}\"   (reference this finding in the doc)");
         return;
     }
 
@@ -695,6 +699,51 @@ void Doc()
         if (argv.Json) { Console.WriteLine(api.LastRaw); return; }
         Console.WriteLine($"# doc — board {b.Id} (v{b.DocVersion})");
         Console.WriteLine(string.IsNullOrEmpty(b.Doc) ? "(empty — nothing written yet)" : b.Doc);
+        SaveDocBaseline(b.Id, b.DocVersion, b.Doc);   // reading sets my reference point
+        return;
+    }
+
+    // what the HUMAN changed in the doc out-of-band since I last read/wrote it. Diffs
+    // the live doc against my local baseline (advanced on every show/edit/append), so
+    // whatever surfaces is what moved while I wasn't the one editing. --peek to look
+    // without advancing the baseline.
+    if (sub == "changes" || sub == "diff")
+    {
+        var b = api.Get<BoardDto>($"/api/boards/{ResolveBoard(posIndex: 1)}");
+        var baseline = LoadDocBaseline(b.Id);
+        if (baseline is null)
+        {
+            SaveDocBaseline(b.Id, b.DocVersion, b.Doc);
+            Console.WriteLine($"reference point set at v{b.DocVersion} — no prior baseline to compare against.");
+            Console.WriteLine("re-run `weaver doc changes` after the human edits to see what moved.");
+            return;
+        }
+        var hunks = DocDiff.Compute(baseline.Text, b.Doc);
+        if (hunks.Count == 0) { Console.WriteLine($"no changes since you last saw it (v{b.DocVersion})."); return; }
+        Console.WriteLine($"{hunks.Count} change(s) to the document since you last saw it (v{baseline.Version} → v{b.DocVersion}):");
+        Console.WriteLine();
+        foreach (var h in hunks)
+        {
+            switch (h.Change)
+            {
+                case DocDiff.Kind.Added:
+                    Console.WriteLine($"  + added (line {h.AtLine}):");
+                    foreach (var l in h.Added) Console.WriteLine($"        {l}");
+                    break;
+                case DocDiff.Kind.Removed:
+                    Console.WriteLine($"  - removed (was around line {h.AtLine}):");
+                    foreach (var l in h.Removed) Console.WriteLine($"        {l}");
+                    break;
+                case DocDiff.Kind.Changed:
+                    Console.WriteLine($"  ~ changed (line {h.AtLine}):");
+                    foreach (var l in h.Removed) Console.WriteLine($"      - {l}");
+                    foreach (var l in h.Added) Console.WriteLine($"      + {l}");
+                    break;
+            }
+            Console.WriteLine();
+        }
+        if (argv.Has("peek")) Console.WriteLine($"(--peek: baseline left at v{baseline.Version}; these will show again next time.)");
+        else SaveDocBaseline(b.Id, b.DocVersion, b.Doc);   // mark as read
         return;
     }
 
@@ -724,7 +773,7 @@ void Doc()
         return;
     }
 
-    Console.Error.WriteLine($"weaver: unknown doc subcommand '{sub}'. try: doc show | doc edit | doc append");
+    Console.Error.WriteLine($"weaver: unknown doc subcommand '{sub}'. try: doc show | doc changes | doc edit | doc append");
     Environment.Exit(2);
 }
 
@@ -742,13 +791,39 @@ void EditDoc(string id, Func<string, string> transform, string did)
         if (next == b.Doc) { Console.WriteLine("no change."); return; }
         var res = api.Put<DocDto>($"/api/boards/{id}/doc",
             new { baseVersion = b.DocVersion, baseText = b.Doc, text = next });
-        if (!res.Conflict) { Console.WriteLine($"{did} — board {id} now at v{res.DocVersion}"); return; }
+        if (!res.Conflict) { SaveDocBaseline(id, res.DocVersion, res.Doc); Console.WriteLine($"{did} — board {id} now at v{res.DocVersion}"); return; }
         // conflict: loop re-fetches the latest text and re-anchors the transform.
     }
     throw new ApiError("doc edit kept colliding with concurrent edits — `doc show` and try again.");
 }
 
 static string Trunc(string s) => s.Length <= 40 ? s.Replace("\n", "⏎") : s[..40].Replace("\n", "⏎") + "…";
+
+// --- doc baseline: the last doc text+version THIS cli saw for a board -------
+// The CLI is otherwise stateless; this is the one bit of local memory, so
+// `doc changes` can show what the human edited out-of-band. Advanced on every
+// doc show/edit/append, so what it surfaces is only what moved when I wasn't the
+// editor. XDG state dir; one small json per board.
+static string DocBaselinePath(string board)
+{
+    var stateHome = Environment.GetEnvironmentVariable("XDG_STATE_HOME");
+    if (string.IsNullOrEmpty(stateHome))
+        stateHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "state");
+    var dir = Path.Combine(stateHome, "weaver", "doc");
+    Directory.CreateDirectory(dir);
+    return Path.Combine(dir, board + ".json");
+}
+
+static DocBaseline? LoadDocBaseline(string board)
+{
+    var p = DocBaselinePath(board);
+    if (!File.Exists(p)) return null;
+    try { return JsonSerializer.Deserialize<DocBaseline>(File.ReadAllText(p)); }
+    catch { return null; }   // corrupt/old snapshot → treat as none, re-baseline
+}
+
+static void SaveDocBaseline(string board, int version, string text) =>
+    File.WriteAllText(DocBaselinePath(board), JsonSerializer.Serialize(new DocBaseline(version, text)));
 
 string ResolveBoard(int posIndex = -1)
 {
@@ -799,7 +874,7 @@ string ResolveService(string token, bool strict = true)
         }
     }
     if (!strict) return token;
-    Console.Error.WriteLine($"weaver: no service matches '{token}'. try `weaver graph` for the list.");
+    Console.Error.WriteLine($"weaver: no service matches '{token}'. try `weaver overview` for the list.");
     Environment.Exit(2);
     return token;
 }
@@ -844,6 +919,9 @@ static string Unit(string metric) => metric switch
 static string Clock(string iso) => DateTimeOffset.TryParse(iso, out var d) ? d.ToString("HH:mm:ss") : iso;
 
 void Hint(params string[] next) => Console.WriteLine("next: " + string.Join("\n      ", next));
+
+// The local, per-board record of the doc state this CLI last saw (see doc changes).
+record DocBaseline(int Version, string Text);
 
 // --- tiny arg parser ------------------------------------------------------
 sealed class ArgParser

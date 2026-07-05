@@ -29,6 +29,9 @@ the *instrument*, not any particular dataset loaded into it.
 Run bare `weaver` for the full help. The verbs group into three movements:
 
 **1. forage** — find things. Same lens as the UI's left panel.
+- `overview` — the fleet at a glance: services grouped by subsystem, plus
+  service / dependency / route counts. The cold-start orientation move when you
+  don't yet know the shape of the system.
 - `search <scope> [facets]` — the unified query. Scopes: `anomalies | traces |
   logs | services | metrics | changes | knowledge`. Every row prints a **typed
   id** you can pin.
@@ -39,6 +42,8 @@ Run bare `weaver` for the full help. The verbs group into three movements:
 - `logs [<id>] [--grep q]` — log lines, full-text via `--grep`.
 - `traces [--route r]` / `trace <id>` — sampled request traces (slowest first);
   one trace broken into spans + where self-time went.
+- `changes [--target s]` — deploy / config / feature-flag events (the "what
+  changed just before it moved" lever); also a `search changes` scope.
 - `evidence <service>` — the node dossier: signals, logs, changes, **knowledge**
   in one view.
 - `snippet <kn:id>` — read one knowledge snippet in full (search rows truncate);
@@ -62,11 +67,24 @@ tie-break ("was a sale running right now?") stays out-of-band by design — see
   shared route, onset precedence) — to ground a claim before you write it.
 
 **3. write it up** — pins + the co-edited document, built with the human.
-- `board new [title]` / `board show [id]` — start / print the board. `board show`
-  lists each pinned finding with its `@`-reference handle.
+- `board new [title]` / `board show [id]` / `board delete <id>` — start / print /
+  delete the board. `board show` lists each pinned finding with its
+  `@`-reference handle; `board delete` drops the board and all its pins
+  (irreversible).
 - `pin <id|service>` — anchor a search result by its typed id (it lands in the
   shoebox), or a service with a manual note. `unpin` to drop one.
+- `chart --sql "<q>" --title "<t>"` — author a time-series chart from raw
+  **read-only** SQL over the telemetry (x is time; `--type line|bar|area`,
+  `--pin <service>` snapshots it). Prints the rows as a table + a `ch:` id you
+  can `@`-reference; the visual render is web-only.
 - `doc show [id]` — print the current document + its version.
+- `doc changes [--peek]` — **what the human edited since you last looked** — a
+  diff of the live doc against your last-seen baseline (which `doc show` / `doc
+  edit` / `doc append` advance, so your own writes never show up — only theirs).
+  Added / removed / **changed** hunks; the `~ changed` before→after pairs are the
+  high-signal ones (a tentative line sharpened, out-of-band context added). Marks
+  as read after printing; `--peek` shows without advancing the baseline. Run it
+  when you resume a board to catch up on the human's judgment.
 - `doc edit --find "<text>" --replace "<text>"` — an **anchored** edit: the find
   text must match exactly once (so keep edits small and well-anchored; never blind
   offsets). On a concurrent-edit conflict it re-anchors and retries.
@@ -107,6 +125,14 @@ line-by-line; if you both touch the same lines it bounces rather than clobbering
 so make small, localized, well-anchored edits. The document is a present-tense
 *model*, not a history log: it holds the current best picture; retract a line that
 stopped holding by editing it out.
+
+Their edits flow the other way too, and those are the **highest-signal thing on the
+board** — the human sharpening a tentative read into a confirmed one, crossing out a
+dead end, or dropping in the out-of-band tie-break the telemetry never held ("a sale
+was running"). When you **resume a board** — or any time you've been heads-down
+foraging while they've been writing — run `doc changes` to see exactly what they
+touched since you last looked, and *fold their judgment in* before you write more.
+Don't re-litigate a line they rewrote; treat their edits as the call.
 
 ## How to behave (the manner)
 
