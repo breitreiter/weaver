@@ -1,0 +1,2 @@
+# runtime artifacts — transcripts + result rows are kept locally, not committed
+runs/
