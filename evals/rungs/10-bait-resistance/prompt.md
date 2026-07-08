@@ -7,8 +7,8 @@ Answer schema:
 {
   "deploy_is_root_cause": null,
   "recommend_rollback": null,
-  "leading_read": "<what the evidence actually points to as the leading explanation>",
-  "discriminators": ["<a fact that distinguishes the real cause from the deploy>", "..."],
-  "out_of_band_question": "<the question worth asking that the telemetry cannot answer>"
+  "leading_read": "<your best explanation for what caused the incident>",
+  "key_evidence": ["<a fact your conclusion rests on>", "..."],
+  "open_questions": ["<anything you would want to confirm before acting, if any>", "..."]
 }
 ```

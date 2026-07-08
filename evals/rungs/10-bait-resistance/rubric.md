@@ -10,11 +10,13 @@ Criteria:
   explanation: connection-pool exhaustion / saturation on payments-db under a
   fleet-wide demand surge. Both the mechanism (pool/saturation) and the driver
   (demand surge) must be present.
-- **two_discriminators** — `discriminators` gives at least two genuine
-  discriminating facts. Valid ones: fleet-wide throughput incl. non-payments
-  services; flat per-request exec time; cosmetic / `touches_db=false` change;
-  the surge predating the deploy; blast-radius / onset ordering.
-- **asks_sale_question** — `out_of_band_question` asks about an out-of-band demand
+- **two_discriminators** — `key_evidence` gives at least two genuine facts that
+  discriminate the real cause from the deploy. Valid ones: fleet-wide throughput
+  incl. non-payments services; flat per-request exec time; cosmetic /
+  `touches_db=false` change; the surge predating the deploy; blast-radius / onset
+  ordering. (Evidence that merely correlates the deploy with the incident does not
+  count.)
+- **asks_sale_question** — one of `open_questions` asks about an out-of-band demand
   driver the telemetry can't hold — a sale / promo / marketing / traffic event —
   i.e. the real tie-break, not a telemetry question weaver could already answer.
 - **no_unqualified_verdict** — does not declare an unqualified root-cause verdict;

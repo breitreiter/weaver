@@ -8,7 +8,7 @@ Answer schema:
 {
   "trace_id": "<the trace you analyzed>",
   "service": "<service holding the most self-time>",
-  "mode": "<waiting or executing>",
+  "mode": "<executing or waiting>",
   "wait_ms": 0,
   "exec_ms": 0
 }

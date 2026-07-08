@@ -6,6 +6,6 @@ Answer schema:
 ```json
 {
   "version": "<version string>",
-  "deployed_at": "<time, e.g. 09:03:47 or full ISO-8601>"
+  "deployed_at": "<time of day (HH:MM:SS) or full ISO-8601 timestamp>"
 }
 ```

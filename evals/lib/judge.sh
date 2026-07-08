@@ -20,26 +20,37 @@ passjq="$rung_dir/pass.jq"
 [[ -n "${MINROUTER_KEY:-}" ]] || { echo "MINROUTER_KEY not set" >&2; exit 2; }
 
 # Build the judge's user message: rubric + candidate answer + (optional) transcript.
-user="$(cat "$rubric")
+# Assembled into a temp file and passed to jq via --rawfile, NOT --arg: a long
+# transcript (rungs 8-10 with a verbose harness run to 100KB+) as a jq --arg blows
+# past the argv limit ("Argument list too long"). The transcript is capped to its
+# tail — the answer JSON is already included in full, and the final synthesis is
+# what corroborates the reasoning — so judge input stays bounded and cheap.
+umsg="$(mktemp)"; trap 'rm -f "$umsg"' EXIT
+{
+  cat "$rubric"
+  printf '\n\n--- CANDIDATE ANSWER (JSON) ---\n'; cat "$answer_file"
+  if [[ -n "$transcript_file" && -f "$transcript_file" ]]; then
+    printf '\n\n--- CANDIDATE TRANSCRIPT (tail) ---\n'; tail -c 40000 "$transcript_file"
+  fi
+} > "$umsg"
 
---- CANDIDATE ANSWER (JSON) ---
-$(cat "$answer_file")"
-if [[ -n "$transcript_file" && -f "$transcript_file" ]]; then
-  user="$user
-
---- CANDIDATE TRANSCRIPT ---
-$(cat "$transcript_file")"
-fi
-
-body="$(jq -n --arg model "$JUDGE_MODEL" --arg sys "$(cat "$JUDGE_SYS")" --arg usr "$user" \
+body="$(jq -n --arg model "$JUDGE_MODEL" --rawfile sys "$JUDGE_SYS" --rawfile usr "$umsg" \
   '{model:$model, temperature:0, max_tokens:1200,
     messages:[{role:"system",content:$sys},{role:"user",content:$usr}]}')"
 
-resp="$(curl -s -H "Authorization: Bearer $MINROUTER_KEY" -H 'content-type: application/json' \
-  -d "$body" "$MR_URL/x/cf/compat/chat/completions")"
-content="$(jq -r '.choices[0].message.content // empty' <<<"$resp")"
+# cf/GLM-5.2 is intermittently slow or errors transiently (seen: bad-format 2019,
+# empty body, and outright hangs). Retry a few times with a hard per-call timeout so
+# one bad call can't stall the matrix; judge-pass.sh re-runs any that still error.
+content=""; resp=""
+for attempt in 1 2 3; do
+  resp="$(curl -s --max-time 75 -H "Authorization: Bearer $MINROUTER_KEY" \
+    -H 'content-type: application/json' -d "$body" "$MR_URL/x/cf/compat/chat/completions")"
+  content="$(jq -r '.choices[0].message.content // empty' <<<"$resp" 2>/dev/null)"
+  [[ -n "$content" ]] && break
+  sleep 2
+done
 if [[ -z "$content" ]]; then
-  echo "judge call failed: $(jq -c '.error // .' <<<"$resp" 2>/dev/null || echo "$resp" | head -c 300)" >&2
+  echo "judge call failed after $attempt tries: $(jq -c '.error // .' <<<"$resp" 2>/dev/null | head -c 200 || head -c 200 <<<"$resp")" >&2
   exit 1
 fi
 
